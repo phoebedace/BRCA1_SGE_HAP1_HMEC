@@ -1,0 +1,2009 @@
+---
+title: "SGE Analysis Pipeline to run for all regions before merging dfs"
+author: "Phoebe Dace, The Francis Crick Institute"
+output:
+  html_document:
+    toc: yes
+    df_print: paged
+  html_notebook:
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+
+Run this script for each HMEC SGE experiment to create an output csv.
+
+Initial Setup
+==============
+#rerun samples in new out_dir
+```{r}
+#Load packages needed
+require(gridExtra)
+require(mclust)
+library(mixtools)
+require(ggplot2)
+library(plyr)
+require(VennDiagram)
+library(gam)
+library(plotROC)
+require(tidyverse)
+
+
+setwd("~/OneDrive - The Francis Crick Institute/R/HMEC_ALL_V2/")
+
+#Need to update all this 
+#Do not change replicates throughout script, only here
+date <- "241120"
+SGE_region <- "x12a"
+rep1 <- "rHMEC1"
+rep2 <- "rHMEC2"
+expt <- "D7D21o" #o means +olaparib. Run for 'D7D14', 'D7D14o', 'D7D21', 'D7D21o'
+
+#Load dataset
+#load variables
+BRCA1_editing_info <- read.table("/Users/dacep/OneDrive - The Francis Crick Institute/R/HMEC_ALL_V2/BRCA1_editing_data.txt",header=TRUE, sep="\t")
+#must rename this for each experiment.
+experiment_dir <- "/Users/dacep/OneDrive - The Francis Crick Institute/R/HMEC_ALL_V2/pipeline_output/"
+
+#Defining colours
+named_conseq_colors = c("STOP_GAINED" = "#CC6677",
+  "CANONICAL_SPLICE" = "#DDCC77",
+  "INTRONIC" = "#646CFF",
+  "NON_SYNONYMOUS" = "#326C37",
+  "SPLICE_SITE" = "#66B1A3",
+  "SYNONYMOUS" = "#88CCEE",
+  "STOP_LOST" = "#AA4499",
+  "REGULATORY" = "#929000",
+  "5PRIME_UTR" = "#929000",
+  "3PRIME_UTR" = "#332288",
+  "REF" = "#000000")
+
+```
+*Subset Data*
+============
+
+```{r}
+#switching rep. names to be compatible. Defining the full path then reading it into the table. Use "find and replace" feature to change the region when doing a different analysis. Choose 'all' and tick 'wrap'.
+BRCA1regionrL41_file <- paste(experiment_dir,'BRCA1', SGE_region, rep1, expt, '_annotated.txt',sep='')
+BRCA1regionrL42_file <- paste(experiment_dir,'BRCA1', SGE_region, rep2, expt, '_annotated.txt',sep='')
+BRCA1regionrL41 <- read.table(BRCA1regionrL41_file, header=TRUE, sep="\t")
+BRCA1regionrL42 <- read.table(BRCA1regionrL42_file, header=TRUE, sep="\t")
+#Table above shows editing strings, should have one that matches the editing info file near to the top as it's sorted by earliest timepoint reads.
+#rename the columns in above table to match code below in place:
+BRCA1regionrL41 <- BRCA1regionrL41 %>%
+  dplyr::rename(CADD.phred = PHRED,
+    CADD.raw = RawScore,
+    pos = Pos,
+    conseq = Consequence,
+    alt = Alt,
+    polyphen.val = PolyPhenVal)
+
+BRCA1regionrL42 <- BRCA1regionrL42 %>%
+  dplyr::rename(CADD.phred = PHRED,
+    CADD.raw = RawScore,
+    pos = Pos,
+    conseq = Consequence,
+    alt = Alt,
+    polyphen.val = PolyPhenVal)
+
+#SUBSETTING ALL OF THE DATA:
+#which p_hdr_read to use? get from editing info file. 'which' function filters out any amplicons that aren't BRCA1region (in this case)
+BRCA1_editing_info_BRCA1region <-
+  BRCA1_editing_info[which(BRCA1_editing_info$amplicon == paste0('BRCA1', SGE_region)), ]
+#HDR_5_SNV  HDR_3_SNV  cut_pos  cut_end  mut_start  mut_end
+BRCA1region_HDR_5_SNV = as.character(BRCA1_editing_info_BRCA1region$HDR_5_SNV)
+BRCA1region_HDR_3_SNV = as.character(BRCA1_editing_info_BRCA1region$HDR_3_SNV)
+#BRCA1region_cut_pos = as.character(BRCA1_editing_info_BRCA1region$cut_pos)
+BRCA1region_cut_end = as.character(BRCA1_editing_info_BRCA1region$cut_end)
+BRCA1region_mut_start = as.character(BRCA1_editing_info_BRCA1region$mut_start)
+BRCA1region_mut_end = as.character(BRCA1_editing_info_BRCA1region$mut_end)
+```
+*Replicate 1 Analysis*
+====================
+```{r}
+### Replicate 1
+BRCA1regionrL41_cSNV_all <- which(BRCA1regionrL41[,'c_hdr_snv']=='True')
+BRCA1regionrL41_cSNV_all_df = BRCA1regionrL41[BRCA1regionrL41_cSNV_all,]
+BRCA1regionrL41_prog_var_all <- which(BRCA1regionrL41[,'all_hdr_variant']=='True' & BRCA1regionrL41[,'edit_string']!='-WT')
+BRCA1regionrL41_prog_var_all_df = BRCA1regionrL41[BRCA1regionrL41_prog_var_all,]
+BRCA1regionrL41_prog_map_all = which(BRCA1regionrL41_prog_var_all_df[,'pos']!='REF')
+BRCA1regionrL41_prog_map_all_df = BRCA1regionrL41_prog_var_all_df[BRCA1regionrL41_prog_map_all,]
+BRCA1regionrL41_prog_map_exon_all = which(BRCA1regionrL41_prog_map_all_df[,'cDNApos']!='REF' & BRCA1regionrL41_prog_map_all_df[,'cDNApos']!='NA')
+BRCA1regionrL41_prog_map_exon_all_df = BRCA1regionrL41_prog_map_all_df[BRCA1regionrL41_prog_map_exon_all,]
+BRCA1regionrL41_prog_map_CADD = which(BRCA1regionrL41_prog_map_all_df[,'CADD.phred']!='NA')
+BRCA1regionrL41_prog_map_CADD_df = BRCA1regionrL41_prog_map_all_df[BRCA1regionrL41_prog_map_CADD,]
+#threshold at 1 in 100,000 pre reads called 'thresh5'
+BRCA1regionrL41_prog_var_thresh5 <- which(as.numeric(as.character(BRCA1regionrL41_prog_var_all_df[,'pre_freq']))>=0.000001)
+BRCA1regionrL41_prog_var_thresh5_df = BRCA1regionrL41_prog_var_all_df[BRCA1regionrL41_prog_var_thresh5,]
+BRCA1regionrL41_prog_map_thresh5 <- which(as.numeric(as.character(BRCA1regionrL41_prog_map_all_df[,'pre_freq']))>=0.000001)
+BRCA1regionrL41_prog_map_thresh5_df = BRCA1regionrL41_prog_map_all_df[BRCA1regionrL41_prog_map_thresh5,]
+BRCA1regionrL41_prog_map_exon_thresh5 <- which(as.numeric(as.character(BRCA1regionrL41_prog_map_exon_all_df[,'pre_freq']))>=0.000001)
+BRCA1regionrL41_prog_map_exon_thresh5_df = BRCA1regionrL41_prog_map_exon_all_df[BRCA1regionrL41_prog_map_exon_thresh5,]
+BRCA1regionrL41_prog_map_CADD_thresh5 <- which(as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_df[,'pre_freq']))>=0.000001)
+BRCA1regionrL41_prog_map_CADD_thresh5_df = BRCA1regionrL41_prog_map_CADD_df[BRCA1regionrL41_prog_map_CADD_thresh5,]
+
+# r1 Number of 'prog_var variants' --> all variants in library (i.e. length * 3 + 1)
+BRCA1regionrL41_prog_var_all_lib_count = length(BRCA1regionrL41_prog_var_all_df$lib)
+BRCA1regionrL41_prog_var_all_lib_count
+# r1 Max and min reads for each variant
+BRCA1regionrL41_prog_var_all_min_lib_counts = min(BRCA1regionrL41_prog_var_all_df$lib)
+BRCA1regionrL41_prog_var_all_min_lib_counts
+BRCA1regionrL41_prog_var_all_max_lib_counts = max(BRCA1regionrL41_prog_var_all_df$lib)
+BRCA1regionrL41_prog_var_all_max_lib_counts
+
+# r1 Number of 'prog_map variants' --> will exclude the hdr_wt and any PAM_wt variants in sge region (1 or 2)
+BRCA1regionrL41_prog_map_all_lib_count = length(BRCA1regionrL41_prog_map_all_df$lib)
+BRCA1regionrL41_prog_map_all_lib_count
+# r1 Max and min reads for each variant. Shows the number of reads that the variant with the min number of reads has
+BRCA1regionrL41_prog_map_all_min_lib_counts = min(BRCA1regionrL41_prog_map_all_df$lib)
+BRCA1regionrL41_prog_map_all_min_lib_counts
+BRCA1regionrL41_prog_map_all_max_lib_counts = max(BRCA1regionrL41_prog_map_all_df$lib)
+BRCA1regionrL41_prog_map_all_max_lib_counts
+```
+Histogram of Library Counts
+---------------------------
+
+Log Coverage of Library Reads Across SGE Region
+-------------------------------------
+
+Min and Max Read Counts at Day 5
+-----------------------
+```{r}
+# r1 Number of pre 'SNV variants' --> out of all programmed.
+BRCA1regionrL41_prog_var_all_pre_count = length(BRCA1regionrL41_prog_var_all_df$pre)
+BRCA1regionrL41_prog_var_all_pre_count
+# r1 Max and min pre reads for each prog_var
+BRCA1regionrL41_prog_var_all_min_pre_counts = min(BRCA1regionrL41_prog_var_all_df$pre)
+BRCA1regionrL41_prog_var_all_min_pre_counts
+BRCA1regionrL41_prog_var_all_max_pre_counts = max(BRCA1regionrL41_prog_var_all_df$pre)
+BRCA1regionrL41_prog_var_all_max_pre_counts
+# r1 Number of pre 'SNV variants' --> out of all non-wt variants (2-3 less than all programmed var.)
+BRCA1regionrL41_prog_map_all_pre_count = length(BRCA1regionrL41_prog_map_all_df$pre)
+BRCA1regionrL41_prog_map_all_pre_count
+# r1 Max and min pre reads for each prog_map
+BRCA1regionrL41_prog_map_all_min_pre_counts = min(BRCA1regionrL41_prog_map_all_df$pre)
+BRCA1regionrL41_prog_map_all_min_pre_counts
+BRCA1regionrL41_prog_map_all_max_pre_counts = max(BRCA1regionrL41_prog_map_all_df$pre)
+BRCA1regionrL41_prog_map_all_max_pre_counts
+```
+
+Min and Max Read Counts at Day 14
+----------------------
+```{r}
+# r1 Number of post 'SNV variants'
+BRCA1regionrL41_prog_map_all_post_count = length(BRCA1regionrL41_prog_map_all_df$post)
+BRCA1regionrL41_prog_map_all_post_count
+# r1 Max and min post reads for each prog_map
+BRCA1regionrL41_prog_map_all_min_post_counts = min(BRCA1regionrL41_prog_map_all_df$post)
+BRCA1regionrL41_prog_map_all_min_post_counts
+BRCA1regionrL41_prog_map_all_max_post_counts = max(BRCA1regionrL41_prog_map_all_df$post)
+BRCA1regionrL41_prog_map_all_max_post_counts
+```
+
+
+prog_map_all_hist_tHDR_pre_pseudo_freq
+--------------------------------------
+```{r}
+# r1 Now using tHDR frequencies instead (for RNA):
+BRCA1regionrL41_prog_map_all_syn_df <- BRCA1regionrL41_prog_map_all_df[which(BRCA1regionrL41_prog_map_all_df$conseq == 'SYNONYMOUS'),]
+BRCA1regionrL41_prog_map_all_syn_tHDR_rna_pre_quarts <- quantile(log2(BRCA1regionrL41_prog_map_all_syn_df$tHDR_rna_pre_ratio))
+BRCA1regionrL41_prog_map_all_syn_tHDR_rna_pre_med <- unname(BRCA1regionrL41_prog_map_all_syn_tHDR_rna_pre_quarts[3])
+BRCA1regionrL41_prog_map_all_syn_tHDR_rna_post_quarts <- quantile(log2(BRCA1regionrL41_prog_map_all_syn_df$tHDR_rna_post_ratio))
+BRCA1regionrL41_prog_map_all_syn_tHDR_rna_post_med <- unname(BRCA1regionrL41_prog_map_all_syn_tHDR_rna_post_quarts[3])
+
+
+```
+
+tHDR Read Counts
+-----------
+```{r}
+# r1 Max and min tHDR_rna reads for each prog_map
+BRCA1regionrL41_prog_map_all_min_rna_counts = min(BRCA1regionrL41_prog_map_exon_all_df$tHDR_rna)
+BRCA1regionrL41_prog_map_all_min_rna_counts
+BRCA1regionrL41_prog_map_all_max_rna_counts = max(BRCA1regionrL41_prog_map_exon_all_df$tHDR_rna)
+BRCA1regionrL41_prog_map_all_max_rna_counts
+BRCA1regionrL41_prog_map_all_min_rna_pseudo_freq = min(BRCA1regionrL41_prog_map_exon_all_df$tHDR_rna_pseudo_freq)
+BRCA1regionrL41_prog_map_all_min_rna_pseudo_freq
+BRCA1regionrL41_prog_map_all_max_rna_pseudo_freq = max(BRCA1regionrL41_prog_map_exon_all_df$tHDR_rna_pseudo_freq)
+BRCA1regionrL41_prog_map_all_max_rna_pseudo_freq
+BRCA1regionrL41_prog_map_all_min_rna_pre_ratio = min(BRCA1regionrL41_prog_map_exon_all_df$tHDR_rna_pre_ratio)
+BRCA1regionrL41_prog_map_all_min_rna_pre_ratio
+BRCA1regionrL41_prog_map_all_max_rna_pre_ratio = max(BRCA1regionrL41_prog_map_exon_all_df$tHDR_rna_pre_ratio)
+BRCA1regionrL41_prog_map_all_max_rna_pre_ratio
+BRCA1regionrL41_prog_map_all_min_rna_post_ratio = min(BRCA1regionrL41_prog_map_exon_all_df$tHDR_rna_post_ratio)
+BRCA1regionrL41_prog_map_all_min_rna_post_ratio
+BRCA1regionrL41_prog_map_all_max_rna_post_ratio = max(BRCA1regionrL41_prog_map_exon_all_df$tHDR_rna_post_ratio)
+BRCA1regionrL41_prog_map_all_max_rna_post_ratio
+```
+Correlation Between Samples
+---------------------------
+```{r}
+# r1 check correlation between different experimental samples:
+cor(log2(BRCA1regionrL41_prog_map_all_df$tHDR_rna_pseudo_freq),
+  log2(BRCA1regionrL41_prog_map_all_df$tHDR_pre_pseudo_freq),
+  method = 'spearman')
+cor(log2(BRCA1regionrL41_prog_map_all_df$tHDR_post_pseudo_freq),
+  log2(BRCA1regionrL41_prog_map_all_df$tHDR_pre_pseudo_freq),
+  method = 'spearman')
+cor(log2(BRCA1regionrL41_prog_map_all_df$tHDR_rna_pseudo_freq),
+  log2(BRCA1regionrL41_prog_map_all_df$tHDR_post_pseudo_freq),
+  method = 'spearman')
+cor(log2(BRCA1regionrL41_prog_map_all_df$tHDR_lib_pseudo_freq),
+  log2(BRCA1regionrL41_prog_map_all_df$tHDR_pre_pseudo_freq),
+  method = 'spearman')
+cor(log2(BRCA1regionrL41_prog_map_all_df$tHDR_lib_pseudo_freq),
+  log2(BRCA1regionrL41_prog_map_all_df$tHDR_post_pseudo_freq),
+  method = 'spearman')
+cor(log2(BRCA1regionrL41_prog_map_all_df$tHDR_lib_pseudo_freq),
+  log2(BRCA1regionrL41_prog_map_all_df$tHDR_rna_pseudo_freq),
+  method = 'spearman')
+cor(log2(BRCA1regionrL41_prog_map_all_df$tHDR_lib_pseudo_freq),
+  log2(BRCA1regionrL41_prog_map_all_df$tHDR_post_pre_ratio),
+  method = 'spearman')
+cor(log2(BRCA1regionrL41_prog_map_all_df$tHDR_lib_pseudo_freq),
+  log2(BRCA1regionrL41_prog_map_all_df$post_pre_ratio),
+  method = 'spearman')
+cor(log2(BRCA1regionrL41_prog_map_all_df$tHDR_post_pre_ratio),
+  log2(BRCA1regionrL41_prog_map_all_df$tHDR_post_lib_ratio),
+  method = 'spearman')
+cor(log2(BRCA1regionrL41_prog_map_all_df$post_pre_ratio),
+  log2(BRCA1regionrL41_prog_map_all_df$post_lib_ratio),
+  method = 'spearman')
+cor(log2(BRCA1regionrL41_prog_map_all_df$tHDR_post_pre_ratio),
+  log2(BRCA1regionrL41_prog_map_all_df$post_pre_ratio),
+  method = 'spearman')
+cor(log2(BRCA1regionrL41_prog_map_all_df$tHDR_post_lib_ratio),
+  log2(BRCA1regionrL41_prog_map_all_df$post_lib_ratio),
+  method = 'spearman')
+
+# r1 switching to the df with CADD scores to make correlations with CADD
+cor(log2(BRCA1regionrL41_prog_map_CADD_df$post_pre_ratio),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_df$CADD.phred)),
+  method = 'spearman')
+cor(log2(BRCA1regionrL41_prog_map_CADD_df$tHDR_post_pre_ratio),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_df$CADD.phred)),
+  method = 'spearman')
+cor(log2(BRCA1regionrL41_prog_map_CADD_df$post_lib_ratio),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_df$CADD.phred)),
+  method = 'spearman')
+cor(log2(BRCA1regionrL41_prog_map_CADD_df$tHDR_post_lib_ratio),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_df$CADD.phred)),
+  method = 'spearman')
+cor(log2(BRCA1regionrL41_prog_map_CADD_df$pre_lib_ratio),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_df$CADD.phred)),
+  method = 'spearman')
+cor(log2(BRCA1regionrL41_prog_map_CADD_df$tHDR_pre_lib_ratio),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_df$CADD.phred)),
+  method = 'spearman')
+```
+Sequencing Error Correction: cSNV Variants
+----------------------------
+```{r}
+# r1 # r1 SEQUENCING ERROR CORRECTION ANALYSIS:
+# r1 Number of corr_pre 'SNV variants' --> length * 3 snvs minus 3 * PAM sites
+BRCA1regionrL41_cSNV_all_corr_pre_count = length(BRCA1regionrL41_cSNV_all_df$corr_pre)
+BRCA1regionrL41_cSNV_all_corr_pre_count
+# r1 Max and min corr_pre reads for each prog_map
+BRCA1regionrL41_cSNV_all_min_corr_pre_counts = min(BRCA1regionrL41_cSNV_all_df$corr_pre)
+BRCA1regionrL41_cSNV_all_min_corr_pre_counts
+BRCA1regionrL41_cSNV_all_max_corr_pre_counts = max(BRCA1regionrL41_cSNV_all_df$corr_pre)
+BRCA1regionrL41_cSNV_all_max_corr_pre_counts
+
+```
+cSNV Corrected Day 5 Read Counts r1
+------------
+
+```{r}
+# r1 Number of corr_post 'SNV variants' --> will be 2BRCA1region less than SGE region length x 3 due to PAM edits
+BRCA1regionrL41_cSNV_all_corr_post_count = length(BRCA1regionrL41_cSNV_all_df$corr_post)
+BRCA1regionrL41_cSNV_all_corr_post_count
+
+# r1 Max and min corr_post reads for each cSNV
+BRCA1regionrL41_cSNV_all_min_corr_post_counts = min(BRCA1regionrL41_cSNV_all_df$corr_post)
+BRCA1regionrL41_cSNV_all_min_corr_post_counts
+BRCA1regionrL41_cSNV_all_max_corr_post_counts = max(BRCA1regionrL41_cSNV_all_df$corr_post)
+BRCA1regionrL41_cSNV_all_max_corr_post_counts
+
+```
+
+
+Sequencing Error Correction: Partial SNV Variants
+-------------------
+```{r}
+# r1 repeat with pSNV variants (only cut end is edited!)
+BRCA1region_p_hdr_snv = paste('p_hdr_',BRCA1region_cut_end,'_snv',sep='')
+BRCA1regionrL41_pSNV_all <- which(BRCA1regionrL41[,BRCA1region_p_hdr_snv]=='True')
+BRCA1regionrL41_pSNV_all_df = BRCA1regionrL41[BRCA1regionrL41_pSNV_all,]
+# r1 Number of 'pSNV variants' --> will be 2BRCA1region less than SGE region length x 3 due to PAM edits
+BRCA1regionrL41_pSNV_all_lib_count = length(BRCA1regionrL41_pSNV_all_df$lib)
+BRCA1regionrL41_pSNV_all_lib_count
+# r1 Max and min reads for each variant
+BRCA1regionrL41_pSNV_all_min_lib_counts = min(BRCA1regionrL41_pSNV_all_df$lib)
+BRCA1regionrL41_pSNV_all_min_lib_counts
+BRCA1regionrL41_pSNV_all_max_lib_counts = max(BRCA1regionrL41_pSNV_all_df$lib)
+BRCA1regionrL41_pSNV_all_max_lib_counts
+# r1 Number of pre 'SNV variants'
+BRCA1regionrL41_pSNV_all_pre_count = length(BRCA1regionrL41_pSNV_all_df$pre)
+BRCA1regionrL41_pSNV_all_pre_count
+# r1 Max and min pre reads for each pSNV
+BRCA1regionrL41_pSNV_all_min_pre_counts = min(BRCA1regionrL41_pSNV_all_df$pre)
+BRCA1regionrL41_pSNV_all_min_pre_counts
+BRCA1regionrL41_pSNV_all_max_pre_counts = max(BRCA1regionrL41_pSNV_all_df$pre)
+BRCA1regionrL41_pSNV_all_max_pre_counts
+
+```
+
+
+
+```{r}
+# r1 Number of post 'SNV variants' --> will be 2BRCA1region less than SGE region length x 3 due to PAM edits
+BRCA1regionrL41_pSNV_all_post_count = length(BRCA1regionrL41_pSNV_all_df$post)
+BRCA1regionrL41_pSNV_all_post_count
+# r1 Max and min post reads for each pSNV
+BRCA1regionrL41_pSNV_all_min_post_counts = min(BRCA1regionrL41_pSNV_all_df$post)
+BRCA1regionrL41_pSNV_all_min_post_counts
+BRCA1regionrL41_pSNV_all_max_post_counts = max(BRCA1regionrL41_pSNV_all_df$post)
+BRCA1regionrL41_pSNV_all_max_post_counts
+
+```
+
+Thresholded Data
+------------------
+# r1 Plots for thresholded data ('thresh5' indicates 1 in 1e5 or higher freq.):
+```{r}
+# r1 Number of 'cSNV variants' --> will be 2BRCA1region less than SGE region length x 3 due to PAM edits
+BRCA1regionrL41_prog_map_thresh5_lib_count = length(BRCA1regionrL41_prog_map_thresh5_df$lib)
+BRCA1regionrL41_prog_map_thresh5_lib_count
+BRCA1regionrL41_prog_map_thresh5_min_lib_counts = min(BRCA1regionrL41_prog_map_thresh5_df$lib)
+BRCA1regionrL41_prog_map_thresh5_min_lib_counts
+BRCA1regionrL41_prog_map_thresh5_max_lib_counts = max(BRCA1regionrL41_prog_map_thresh5_df$lib)
+BRCA1regionrL41_prog_map_thresh5_max_lib_counts
+
+```
+
+
+
+```{r}
+# r1 Number of pre 'SNV variants' --> will be 2BRCA1region less than SGE region length x 3 due to PAM edits
+BRCA1regionrL41_prog_map_thresh5_pre_count = length(BRCA1regionrL41_prog_map_thresh5_df$pre)
+BRCA1regionrL41_prog_map_thresh5_pre_count
+BRCA1regionrL41_prog_map_thresh5_min_pre_counts = min(BRCA1regionrL41_prog_map_thresh5_df$pre)
+BRCA1regionrL41_prog_map_thresh5_min_pre_counts
+BRCA1regionrL41_prog_map_thresh5_max_pre_counts = max(BRCA1regionrL41_prog_map_thresh5_df$pre)
+BRCA1regionrL41_prog_map_thresh5_max_pre_counts
+
+
+# r1 Number of post 'SNV variants' --> will be 2 less than SGE region length x 3 due to PAM edits
+BRCA1regionrL41_prog_map_thresh5_post_count = length(BRCA1regionrL41_prog_map_thresh5_df$post)
+BRCA1regionrL41_prog_map_thresh5_post_count
+BRCA1regionrL41_prog_map_thresh5_min_post_counts = min(BRCA1regionrL41_prog_map_thresh5_df$post)
+BRCA1regionrL41_prog_map_thresh5_min_post_counts
+BRCA1regionrL41_prog_map_thresh5_max_post_counts = max(BRCA1regionrL41_prog_map_thresh5_df$post)
+BRCA1regionrL41_prog_map_thresh5_max_post_counts
+BRCA1regionrL41_prog_map_thresh5_corr_post_count = length(BRCA1regionrL41_cSNV_all_df$corr_post)
+BRCA1regionrL41_prog_map_thresh5_corr_post_count
+BRCA1regionrL41_prog_map_thresh5_min_corr_post_counts = min(BRCA1regionrL41_cSNV_all_df$corr_post)
+BRCA1regionrL41_prog_map_thresh5_min_corr_post_counts
+BRCA1regionrL41_prog_map_thresh5_max_corr_post_counts = max(BRCA1regionrL41_cSNV_all_df$corr_post)
+BRCA1regionrL41_prog_map_thresh5_max_corr_post_counts
+```
+
+```{r}
+
+BRCA1regionrL41_pSNV_thresh5 <-
+  which(BRCA1regionrL41[, BRCA1region_p_hdr_snv] == 'True' &
+          as.numeric(as.character(BRCA1regionrL41[, 'pre_freq'])) >= 0.000001)
+BRCA1regionrL41_pSNV_thresh5_df = BRCA1regionrL41[BRCA1regionrL41_pSNV_thresh5,]
+BRCA1regionrL41_pSNV_thresh5_lib_count = length(BRCA1regionrL41_pSNV_thresh5_df$lib)
+BRCA1regionrL41_pSNV_thresh5_lib_count
+BRCA1regionrL41_pSNV_thresh5_min_lib_counts = min(BRCA1regionrL41_pSNV_thresh5_df$lib)
+BRCA1regionrL41_pSNV_thresh5_min_lib_counts
+BRCA1regionrL41_pSNV_thresh5_max_lib_counts = max(BRCA1regionrL41_pSNV_thresh5_df$lib)
+BRCA1regionrL41_pSNV_thresh5_max_lib_counts
+BRCA1regionrL41_pSNV_thresh5_pre_count = length(BRCA1regionrL41_pSNV_thresh5_df$pre)
+BRCA1regionrL41_pSNV_thresh5_pre_count
+BRCA1regionrL41_pSNV_thresh5_min_pre_counts = min(BRCA1regionrL41_pSNV_thresh5_df$pre)
+BRCA1regionrL41_pSNV_thresh5_min_pre_counts
+BRCA1regionrL41_pSNV_thresh5_max_pre_counts = max(BRCA1regionrL41_pSNV_thresh5_df$pre)
+BRCA1regionrL41_pSNV_thresh5_max_pre_counts
+```
+
+```{r}
+
+BRCA1regionrL41_pSNV_thresh5_post_count = length(BRCA1regionrL41_pSNV_thresh5_df$post)
+BRCA1regionrL41_pSNV_thresh5_post_count
+BRCA1regionrL41_pSNV_thresh5_min_post_counts = min(BRCA1regionrL41_pSNV_thresh5_df$post)
+BRCA1regionrL41_pSNV_thresh5_min_post_counts
+BRCA1regionrL41_pSNV_thresh5_max_post_counts = max(BRCA1regionrL41_pSNV_thresh5_df$post)
+BRCA1regionrL41_pSNV_thresh5_max_post_counts
+```
+
+
+*Replicate 2 Analysis*
+====================
+```{r}
+### Replicate 2
+BRCA1regionrL42_cSNV_all <- which(BRCA1regionrL42[, 'c_hdr_snv'] == 'True')
+BRCA1regionrL42_cSNV_all_df = BRCA1regionrL42[BRCA1regionrL42_cSNV_all,]
+BRCA1regionrL42_prog_var_all <-
+  which(BRCA1regionrL42[, 'all_hdr_variant'] == 'True' &
+          BRCA1regionrL42[, 'edit_string'] != '-WT')
+BRCA1regionrL42_prog_var_all_df = BRCA1regionrL42[BRCA1regionrL42_prog_var_all,]
+BRCA1regionrL42_prog_map_all = which(BRCA1regionrL42_prog_var_all_df[, 'pos'] != 'REF')
+BRCA1regionrL42_prog_map_all_df = BRCA1regionrL42_prog_var_all_df[BRCA1regionrL42_prog_map_all,]
+BRCA1regionrL42_prog_map_exon_all = which(BRCA1regionrL42_prog_map_all_df[, 'cDNApos'] !=
+                                       'REF' &
+                                       BRCA1regionrL42_prog_map_all_df[, 'cDNApos'] != 'NA')
+BRCA1regionrL42_prog_map_exon_all_df = BRCA1regionrL42_prog_map_all_df[BRCA1regionrL42_prog_map_exon_all,]
+BRCA1regionrL42_prog_map_CADD = which(BRCA1regionrL42_prog_map_all_df[, 'CADD.phred'] !=
+                                   'NA')
+BRCA1regionrL42_prog_map_CADD_df = BRCA1regionrL42_prog_map_all_df[BRCA1regionrL42_prog_map_CADD,]
+
+#threshold at 1 in 100,000 pre reads called 'thresh5'
+BRCA1regionrL42_prog_var_thresh5 <-
+  which(as.numeric(as.character(BRCA1regionrL42_prog_var_all_df[, 'pre_freq'])) >= 0.000001)
+BRCA1regionrL42_prog_var_thresh5_df = BRCA1regionrL42_prog_var_all_df[BRCA1regionrL42_prog_var_thresh5,]
+BRCA1regionrL42_prog_map_thresh5 <-
+  which(as.numeric(as.character(BRCA1regionrL42_prog_map_all_df[, 'pre_freq'])) >= 0.000001)
+BRCA1regionrL42_prog_map_thresh5_df = BRCA1regionrL42_prog_map_all_df[BRCA1regionrL42_prog_map_thresh5,]
+BRCA1regionrL42_prog_map_exon_thresh5 <-
+  which(as.numeric(as.character(BRCA1regionrL42_prog_map_exon_all_df[, 'pre_freq'])) >= 0.000001)
+BRCA1regionrL42_prog_map_exon_thresh5_df = BRCA1regionrL42_prog_map_exon_all_df[BRCA1regionrL42_prog_map_exon_thresh5,]
+BRCA1regionrL42_prog_map_CADD_thresh5 <-
+  which(as.numeric(as.character(BRCA1regionrL42_prog_map_CADD_df[, 'pre_freq'])) >= 0.000001)
+BRCA1regionrL42_prog_map_CADD_thresh5_df = BRCA1regionrL42_prog_map_CADD_df[BRCA1regionrL42_prog_map_CADD_thresh5,]
+
+# r2 Number of 'prog_var variants' --> all variants in library (i.e. length * 3 + 1)
+BRCA1regionrL42_prog_var_all_lib_count = length(BRCA1regionrL42_prog_var_all_df$lib)
+BRCA1regionrL42_prog_var_all_lib_count
+# r2 Max and min reads for each variant
+BRCA1regionrL42_prog_var_all_min_lib_counts = min(BRCA1regionrL42_prog_var_all_df$lib)
+BRCA1regionrL42_prog_var_all_min_lib_counts
+BRCA1regionrL42_prog_var_all_max_lib_counts = max(BRCA1regionrL42_prog_var_all_df$lib)
+BRCA1regionrL42_prog_var_all_max_lib_counts
+
+# r2 Number of 'prog_map variants' --> will exclude the hdr_wt and any PAM_wt variants in sge region (1 or 2)
+BRCA1regionrL42_prog_map_all_lib_count = length(BRCA1regionrL42_prog_map_all_df$lib)
+BRCA1regionrL42_prog_map_all_lib_count
+# r2 Max and min reads for each variant
+BRCA1regionrL42_prog_map_all_min_lib_counts = min(BRCA1regionrL42_prog_map_all_df$lib)
+BRCA1regionrL42_prog_map_all_min_lib_counts
+BRCA1regionrL42_prog_map_all_max_lib_counts = max(BRCA1regionrL42_prog_map_all_df$lib)
+BRCA1regionrL42_prog_map_all_max_lib_counts
+```
+
+Min and Max Reads at Day 5
+--------------------------
+```{r}
+# r2 Number of pre 'SNV variants' --> out of all programmed.
+BRCA1regionrL42_prog_var_all_pre_count = length(BRCA1regionrL42_prog_var_all_df$pre)
+BRCA1regionrL42_prog_var_all_pre_count
+# r2 Max and min pre reads for each prog_var
+BRCA1regionrL42_prog_var_all_min_pre_counts = min(BRCA1regionrL42_prog_var_all_df$pre)
+BRCA1regionrL42_prog_var_all_min_pre_counts
+BRCA1regionrL42_prog_var_all_max_pre_counts = max(BRCA1regionrL42_prog_var_all_df$pre)
+BRCA1regionrL42_prog_var_all_max_pre_counts
+
+# r2 Number of pre 'SNV variants' --> out of all non-wt variants (2-3 less than all programmed var.)
+BRCA1regionrL42_prog_map_all_pre_count = length(BRCA1regionrL42_prog_map_all_df$pre)
+BRCA1regionrL42_prog_map_all_pre_count
+# r2 Max and min pre reads for each prog_map
+BRCA1regionrL42_prog_map_all_min_pre_counts = min(BRCA1regionrL42_prog_map_all_df$pre)
+BRCA1regionrL42_prog_map_all_min_pre_counts
+BRCA1regionrL42_prog_map_all_max_pre_counts = max(BRCA1regionrL42_prog_map_all_df$pre)
+BRCA1regionrL42_prog_map_all_max_pre_counts
+```
+
+Min and Max Reads at Day 14
+---------------------
+```{r}
+# r2 Number of post 'SNV variants'
+BRCA1regionrL42_prog_map_all_post_count = length(BRCA1regionrL42_prog_map_all_df$post)
+BRCA1regionrL42_prog_map_all_post_count
+
+# r2 Max and min post reads for each prog_map
+BRCA1regionrL42_prog_map_all_min_post_counts = min(BRCA1regionrL42_prog_map_all_df$post)
+BRCA1regionrL42_prog_map_all_min_post_counts
+BRCA1regionrL42_prog_map_all_max_post_counts = max(BRCA1regionrL42_prog_map_all_df$post)
+BRCA1regionrL42_prog_map_all_max_post_counts
+```
+
+Day 5 Total HDR Frequency vs. SNVs
+---------------------
+```{R}
+# r2 Now using tHDR frequencies instead (for RNA):
+BRCA1regionrL42_prog_map_all_syn_df <-
+  BRCA1regionrL42_prog_map_all_df[which(BRCA1regionrL42_prog_map_all_df$conseq == 'SYNONYMOUS'),]
+BRCA1regionrL42_prog_map_all_syn_tHDR_rna_pre_quarts <-
+  quantile(log2(BRCA1regionrL42_prog_map_all_syn_df$tHDR_rna_pre_ratio))
+BRCA1regionrL42_prog_map_all_syn_tHDR_rna_pre_med <-
+  unname(BRCA1regionrL42_prog_map_all_syn_tHDR_rna_pre_quarts[3])
+BRCA1regionrL42_prog_map_all_syn_tHDR_rna_post_quarts <-
+  quantile(log2(BRCA1regionrL42_prog_map_all_syn_df$tHDR_rna_post_ratio))
+BRCA1regionrL42_prog_map_all_syn_tHDR_rna_post_med <-
+  unname(BRCA1regionrL42_prog_map_all_syn_tHDR_rna_post_quarts[3])
+
+
+```
+
+Max and Min tHDR Read Counts Day 13
+----------------------------------
+```{r}
+# r2 Max and min tHDR_rna reads for each prog_map
+BRCA1regionrL42_prog_map_all_min_rna_counts = min(BRCA1regionrL42_prog_map_exon_all_df$tHDR_rna)
+BRCA1regionrL42_prog_map_all_min_rna_counts
+BRCA1regionrL42_prog_map_all_max_rna_counts = max(BRCA1regionrL42_prog_map_exon_all_df$tHDR_rna)
+BRCA1regionrL42_prog_map_all_max_rna_counts
+BRCA1regionrL42_prog_map_all_min_rna_pseudo_freq = min(BRCA1regionrL42_prog_map_exon_all_df$tHDR_rna_pseudo_freq)
+BRCA1regionrL42_prog_map_all_min_rna_pseudo_freq
+BRCA1regionrL42_prog_map_all_max_rna_pseudo_freq = max(BRCA1regionrL42_prog_map_exon_all_df$tHDR_rna_pseudo_freq)
+BRCA1regionrL42_prog_map_all_max_rna_pseudo_freq
+BRCA1regionrL42_prog_map_all_min_rna_pre_ratio = min(BRCA1regionrL42_prog_map_exon_all_df$tHDR_rna_pre_ratio)
+BRCA1regionrL42_prog_map_all_min_rna_pre_ratio
+BRCA1regionrL42_prog_map_all_max_rna_pre_ratio = max(BRCA1regionrL42_prog_map_exon_all_df$tHDR_rna_pre_ratio)
+BRCA1regionrL42_prog_map_all_max_rna_pre_ratio
+BRCA1regionrL42_prog_map_all_min_rna_post_ratio = min(BRCA1regionrL42_prog_map_exon_all_df$tHDR_rna_post_ratio)
+BRCA1regionrL42_prog_map_all_min_rna_post_ratio
+BRCA1regionrL42_prog_map_all_max_rna_post_ratio = max(BRCA1regionrL42_prog_map_exon_all_df$tHDR_rna_post_ratio)
+BRCA1regionrL42_prog_map_all_max_rna_post_ratio
+```
+Correlations Between Samples
+----------------------------------
+```{r}
+# r2 check correlation between different experimental samples:
+cor(log2(BRCA1regionrL42_prog_map_all_df$tHDR_rna_pseudo_freq),
+  log2(BRCA1regionrL42_prog_map_all_df$tHDR_pre_pseudo_freq),
+  method = 'spearman')
+cor(log2(BRCA1regionrL42_prog_map_all_df$tHDR_post_pseudo_freq),
+  log2(BRCA1regionrL42_prog_map_all_df$tHDR_pre_pseudo_freq),
+  method = 'spearman')
+cor(log2(BRCA1regionrL42_prog_map_all_df$tHDR_rna_pseudo_freq),
+  log2(BRCA1regionrL42_prog_map_all_df$tHDR_post_pseudo_freq),
+  method = 'spearman')
+cor(log2(BRCA1regionrL42_prog_map_all_df$tHDR_lib_pseudo_freq),
+  log2(BRCA1regionrL42_prog_map_all_df$tHDR_pre_pseudo_freq),
+  method = 'spearman')
+cor(log2(BRCA1regionrL42_prog_map_all_df$tHDR_lib_pseudo_freq),
+  log2(BRCA1regionrL42_prog_map_all_df$tHDR_post_pseudo_freq),
+  method = 'spearman')
+cor(log2(BRCA1regionrL42_prog_map_all_df$tHDR_lib_pseudo_freq),
+  log2(BRCA1regionrL42_prog_map_all_df$tHDR_rna_pseudo_freq),
+  method = 'spearman')
+cor(log2(BRCA1regionrL42_prog_map_all_df$tHDR_lib_pseudo_freq),
+  log2(BRCA1regionrL42_prog_map_all_df$tHDR_post_pre_ratio),
+  method = 'spearman')
+cor(log2(BRCA1regionrL42_prog_map_all_df$tHDR_lib_pseudo_freq),
+  log2(BRCA1regionrL42_prog_map_all_df$post_pre_ratio),
+  method = 'spearman')
+cor(log2(BRCA1regionrL42_prog_map_all_df$tHDR_post_pre_ratio),
+  log2(BRCA1regionrL42_prog_map_all_df$tHDR_post_lib_ratio),
+  method = 'spearman')
+cor(log2(BRCA1regionrL42_prog_map_all_df$post_pre_ratio),
+  log2(BRCA1regionrL42_prog_map_all_df$post_lib_ratio),
+  method = 'spearman')
+cor(log2(BRCA1regionrL42_prog_map_all_df$tHDR_post_pre_ratio),
+  log2(BRCA1regionrL42_prog_map_all_df$post_pre_ratio),
+  method = 'spearman')
+cor(log2(BRCA1regionrL42_prog_map_all_df$tHDR_post_lib_ratio),
+  log2(BRCA1regionrL42_prog_map_all_df$post_lib_ratio),
+  method = 'spearman')
+
+# r2 switching to the df with CADD scores to make correlations with CADD
+cor(log2(BRCA1regionrL42_prog_map_CADD_df$post_pre_ratio),
+  as.numeric(as.character(BRCA1regionrL42_prog_map_CADD_df$CADD.phred)),
+  method = 'spearman')
+cor(log2(BRCA1regionrL42_prog_map_CADD_df$tHDR_post_pre_ratio),
+  as.numeric(as.character(BRCA1regionrL42_prog_map_CADD_df$CADD.phred)),
+  method = 'spearman')
+cor(log2(BRCA1regionrL42_prog_map_CADD_df$post_lib_ratio),
+  as.numeric(as.character(BRCA1regionrL42_prog_map_CADD_df$CADD.phred)),
+  method = 'spearman')
+cor(log2(BRCA1regionrL42_prog_map_CADD_df$tHDR_post_lib_ratio),
+  as.numeric(as.character(BRCA1regionrL42_prog_map_CADD_df$CADD.phred)),
+  method = 'spearman')
+cor(log2(BRCA1regionrL42_prog_map_CADD_df$pre_lib_ratio),
+  as.numeric(as.character(BRCA1regionrL42_prog_map_CADD_df$CADD.phred)),
+  method = 'spearman')
+cor(log2(BRCA1regionrL42_prog_map_CADD_df$tHDR_pre_lib_ratio),
+  as.numeric(as.character(BRCA1regionrL42_prog_map_CADD_df$CADD.phred)),
+  method = 'spearman')
+```
+Sequencing Error Correction Analysis: cSNV Variants
+-------------------------------
+```{r}
+# r2 # r2 SEQUENCING ERROR CORRECTION ANALYSIS:
+# r2 Number of corr_pre 'SNV variants' --> length * 3 snvs minus 3 * PAM sites
+BRCA1regionrL42_cSNV_all_corr_pre_count = length(BRCA1regionrL42_cSNV_all_df$corr_pre)
+BRCA1regionrL42_cSNV_all_corr_pre_count
+# r2 Max and min corr_pre reads for each prog_map
+BRCA1regionrL42_cSNV_all_min_corr_pre_counts = min(BRCA1regionrL42_cSNV_all_df$corr_pre)
+BRCA1regionrL42_cSNV_all_min_corr_pre_counts
+BRCA1regionrL42_cSNV_all_max_corr_pre_counts = max(BRCA1regionrL42_cSNV_all_df$corr_pre)
+BRCA1regionrL42_cSNV_all_max_corr_pre_counts
+
+
+```
+
+
+```{r}
+# r2 Number of corr_post 'SNV variants' --> will be 2BRCA1region less than SGE region length x 3 due to PAM edits
+BRCA1regionrL42_cSNV_all_corr_post_count = length(BRCA1regionrL42_cSNV_all_df$corr_post)
+BRCA1regionrL42_cSNV_all_corr_post_count
+# r2 Max and min corr_post reads for each cSNV
+BRCA1regionrL42_cSNV_all_min_corr_post_counts = min(BRCA1regionrL42_cSNV_all_df$corr_post)
+BRCA1regionrL42_cSNV_all_min_corr_post_counts
+BRCA1regionrL42_cSNV_all_max_corr_post_counts = max(BRCA1regionrL42_cSNV_all_df$corr_post)
+BRCA1regionrL42_cSNV_all_max_corr_post_counts
+
+```
+
+
+Sequencing Error Correction Analysis: Partial SNV Variants
+----------------------------------
+```{r}
+# r2 repeat with pSNV variants (only cut end is edited!)
+BRCA1region_p_hdr_snv = paste('p_hdr_', BRCA1region_cut_end,
+                         '_snv', sep = '')
+BRCA1regionrL42_pSNV_all <-
+  which(BRCA1regionrL42[, BRCA1region_p_hdr_snv] == 'True')
+BRCA1regionrL42_pSNV_all_df = BRCA1regionrL42[BRCA1regionrL42_pSNV_all,]
+# r2 Number of 'pSNV variants' --> will be 2BRCA1region less than SGE region length x 3 due to PAM edits
+BRCA1regionrL42_pSNV_all_lib_count = length(BRCA1regionrL42_pSNV_all_df$lib)
+BRCA1regionrL42_pSNV_all_lib_count
+# r2 Max and min reads for each variant
+BRCA1regionrL42_pSNV_all_min_lib_counts = min(BRCA1regionrL42_pSNV_all_df$lib)
+BRCA1regionrL42_pSNV_all_min_lib_counts
+BRCA1regionrL42_pSNV_all_max_lib_counts = max(BRCA1regionrL42_pSNV_all_df$lib)
+BRCA1regionrL42_pSNV_all_max_lib_counts
+# r2 Number of pre 'SNV variants'
+BRCA1regionrL42_pSNV_all_pre_count = length(BRCA1regionrL42_pSNV_all_df$pre)
+BRCA1regionrL42_pSNV_all_pre_count
+# r2 Max and min pre reads for each pSNV
+BRCA1regionrL42_pSNV_all_min_pre_counts = min(BRCA1regionrL42_pSNV_all_df$pre)
+BRCA1regionrL42_pSNV_all_min_pre_counts
+BRCA1regionrL42_pSNV_all_max_pre_counts = max(BRCA1regionrL42_pSNV_all_df$pre)
+BRCA1regionrL42_pSNV_all_max_pre_counts
+```
+
+
+```{r}
+# r2 Number of post 'SNV variants' --> will be 2BRCA1region less than SGE region length x 3 due to PAM edits
+BRCA1regionrL42_pSNV_all_post_count = length(BRCA1regionrL42_pSNV_all_df$post)
+BRCA1regionrL42_pSNV_all_post_count
+# r2 Max and min post reads for each pSNV
+BRCA1regionrL42_pSNV_all_min_post_counts = min(BRCA1regionrL42_pSNV_all_df$post)
+BRCA1regionrL42_pSNV_all_min_post_counts
+BRCA1regionrL42_pSNV_all_max_post_counts = max(BRCA1regionrL42_pSNV_all_df$post)
+BRCA1regionrL42_pSNV_all_max_post_counts
+
+
+```
+
+Thresholded Data
+----------------------------------
+```{r}
+# r2 Plots for thresholded data ('thresh5' indicates 1 in 1e5 or higher freq.):
+# r2 Number of 'cSNV variants' --> will be 2BRCA1region less than SGE region length x 3 due to PAM edits
+BRCA1regionrL42_prog_map_thresh5_lib_count = length(BRCA1regionrL42_prog_map_thresh5_df$lib)
+BRCA1regionrL42_prog_map_thresh5_lib_count
+BRCA1regionrL42_prog_map_thresh5_min_lib_counts = min(BRCA1regionrL42_prog_map_thresh5_df$lib)
+BRCA1regionrL42_prog_map_thresh5_min_lib_counts
+BRCA1regionrL42_prog_map_thresh5_max_lib_counts = max(BRCA1regionrL42_prog_map_thresh5_df$lib)
+BRCA1regionrL42_prog_map_thresh5_max_lib_counts
+
+```
+
+```{r}
+# r2 Number of pre 'SNV variants' --> will be 2BRCA1region less than SGE region length x 3 due to PAM edits
+BRCA1regionrL42_prog_map_thresh5_pre_count = length(BRCA1regionrL42_prog_map_thresh5_df$pre)
+BRCA1regionrL42_prog_map_thresh5_pre_count
+BRCA1regionrL42_prog_map_thresh5_min_pre_counts = min(BRCA1regionrL42_prog_map_thresh5_df$pre)
+BRCA1regionrL42_prog_map_thresh5_min_pre_counts
+BRCA1regionrL42_prog_map_thresh5_max_pre_counts = max(BRCA1regionrL42_prog_map_thresh5_df$pre)
+BRCA1regionrL42_prog_map_thresh5_max_pre_counts
+
+```
+
+```{r}
+# r2 Number of post 'SNV variants' --> will be 2 less than SGE region length x 3 due to PAM edits
+BRCA1regionrL42_prog_map_thresh5_post_count = length(BRCA1regionrL42_prog_map_thresh5_df$post)
+BRCA1regionrL42_prog_map_thresh5_post_count
+BRCA1regionrL42_prog_map_thresh5_min_post_counts = min(BRCA1regionrL42_prog_map_thresh5_df$post)
+BRCA1regionrL42_prog_map_thresh5_min_post_counts
+BRCA1regionrL42_prog_map_thresh5_max_post_counts = max(BRCA1regionrL42_prog_map_thresh5_df$post)
+BRCA1regionrL42_prog_map_thresh5_max_post_counts
+BRCA1regionrL42_prog_map_thresh5_corr_post_count = length(BRCA1regionrL42_cSNV_all_df$corr_post)
+BRCA1regionrL42_prog_map_thresh5_corr_post_count
+BRCA1regionrL42_prog_map_thresh5_min_corr_post_counts = min(BRCA1regionrL42_cSNV_all_df$corr_post)
+BRCA1regionrL42_prog_map_thresh5_min_corr_post_counts
+BRCA1regionrL42_prog_map_thresh5_max_corr_post_counts = max(BRCA1regionrL42_cSNV_all_df$corr_post)
+BRCA1regionrL42_prog_map_thresh5_max_corr_post_counts
+```
+
+```{r}
+BRCA1regionrL42_pSNV_thresh5 <-
+  which(BRCA1regionrL42[, BRCA1region_p_hdr_snv] == 'True' & as.numeric(as.character(BRCA1regionrL42[, 'pre_freq'])) >= 0.000001)
+BRCA1regionrL42_pSNV_thresh5_df = BRCA1regionrL42[BRCA1regionrL42_pSNV_thresh5, ]
+BRCA1regionrL42_pSNV_thresh5_lib_count = length(BRCA1regionrL42_pSNV_thresh5_df$lib)
+BRCA1regionrL42_pSNV_thresh5_lib_count
+BRCA1regionrL42_pSNV_thresh5_min_lib_counts = min(BRCA1regionrL42_pSNV_thresh5_df$lib)
+BRCA1regionrL42_pSNV_thresh5_min_lib_counts
+BRCA1regionrL42_pSNV_thresh5_max_lib_counts = max(BRCA1regionrL42_pSNV_thresh5_df$lib)
+BRCA1regionrL42_pSNV_thresh5_max_lib_counts
+BRCA1regionrL42_pSNV_thresh5_pre_count = length(BRCA1regionrL42_pSNV_thresh5_df$pre)
+BRCA1regionrL42_pSNV_thresh5_pre_count
+BRCA1regionrL42_pSNV_thresh5_min_pre_counts = min(BRCA1regionrL42_pSNV_thresh5_df$pre)
+BRCA1regionrL42_pSNV_thresh5_min_pre_counts
+BRCA1regionrL42_pSNV_thresh5_max_pre_counts = max(BRCA1regionrL42_pSNV_thresh5_df$pre)
+BRCA1regionrL42_pSNV_thresh5_max_pre_counts
+```
+
+```{r}
+BRCA1regionrL42_pSNV_thresh5_post_count = length(BRCA1regionrL42_pSNV_thresh5_df$post)
+BRCA1regionrL42_pSNV_thresh5_post_count
+BRCA1regionrL42_pSNV_thresh5_min_post_counts = min(BRCA1regionrL42_pSNV_thresh5_df$post)
+BRCA1regionrL42_pSNV_thresh5_min_post_counts
+BRCA1regionrL42_pSNV_thresh5_max_post_counts = max(BRCA1regionrL42_pSNV_thresh5_df$post)
+BRCA1regionrL42_pSNV_thresh5_max_post_counts
+```
+
+
+Replicate Analysis
+===================
+```{r}
+#define intersection based on most broad category that you care about, and then filter the others based on that intersection:
+#Intersection variants of BRCA1regionrL41_prog_var_thresh5_df:
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int <-
+  BRCA1regionrL41_prog_var_thresh5_df[which(
+    BRCA1regionrL41_prog_var_thresh5_df$variant %in% BRCA1regionrL42_prog_var_thresh5_df$variant),]
+#Intersection variants of BRCA1regionrL42_prog_var_thresh5_df:
+BRCA1regionrL42_prog_var_thresh5_df_rL41_int <-
+  BRCA1regionrL42_prog_var_thresh5_df[which(
+    BRCA1regionrL42_prog_var_thresh5_df$variant %in% BRCA1regionrL41_prog_var_thresh5_df$variant), ]
+#Order each one by variant (check to see if same):
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord <-
+  BRCA1regionrL41_prog_var_thresh5_df_rL42_int[order(BRCA1regionrL41_prog_var_thresh5_df_rL42_int$variant), ]
+BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int[order(BRCA1regionrL42_prog_var_thresh5_df_rL41_int$variant), ]
+
+dim(BRCA1regionrL41_prog_var_thresh5_df)[1] #Number of prog_vars in rL41
+BRCA1regionrL41rL42int_prog_var_thresh5_pre_count <-
+  dim(BRCA1regionrL41_prog_var_thresh5_df_rL42_int)[1]
+BRCA1regionrL41rL42int_prog_var_thresh5_pre_count #Number of prog_vars in rL41 also in rL42
+dim(BRCA1regionrL42_prog_var_thresh5_df)[1] #Number of prog_vars in rL42
+dim(BRCA1regionrL42_prog_var_thresh5_df_rL41_int)[1] #Number of prog_vars in rL42 also in rL41
+
+#Add the following columns from the from rL42 df to the rL41 df:
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$pre
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_lib <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$lib
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_post <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$post
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_rna <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$rna
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_pseudo <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$pre_pseudo
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_post_pseudo <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$post_pseudo
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_rna_pseudo <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$rna_pseudo
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_freq <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$pre_freq
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_post_freq <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$post_freq
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_rna_freq <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$rna_freq
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_pseudo_freq <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$pre_pseudo_freq
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_post_pseudo_freq <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$post_pseudo_freq
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_rna_pseudo_freq <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$rna_pseudo_freq
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_lib_ratio <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$pre_lib_ratio
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_post_pre_ratio <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$post_pre_ratio
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_post_lib_ratio <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$post_lib_ratio
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_rna_pre_ratio <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$rna_pre_ratio
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_rna_post_ratio <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$rna_post_ratio
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_snv_error_ratio <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$pre_snv_error_ratio
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_post_snv_error_ratio <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$post_snv_error_ratio
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_exp_snv_error_reads_pre <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$exp_snv_error_reads_pre
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_exp_snv_error_reads_post <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$exp_snv_error_reads_post
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_corr_pre <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$corr_pre
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_corr_post <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$corr_post
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_corr_pre_pseudo <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$corr_pre_pseudo
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_corr_post_pseudo <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$corr_post_pseudo
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_corr_pseudo_post_pre_ratio <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$corr_pseudo_post_pre_ratio
+
+# tHDR entries pulled over to match...
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_pre <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$tHDR_pre
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_lib <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$tHDR_lib
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_post <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$tHDR_post
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_rna <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$tHDR_rna
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_pre_pseudo_freq <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$tHDR_pre_pseudo_freq
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_post_pseudo_freq <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$tHDR_post_pseudo_freq
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_rna_pseudo_freq <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$tHDR_rna_pseudo_freq
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_pre_lib_ratio <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$tHDR_pre_lib_ratio
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_post_pre_ratio <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$tHDR_post_pre_ratio
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_post_lib_ratio <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$tHDR_post_lib_ratio
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_rna_pre_ratio <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$tHDR_rna_pre_ratio
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_rna_post_ratio <-
+  BRCA1regionrL42_prog_var_thresh5_df_rL41_int_ord$tHDR_rna_post_ratio
+
+#compute new columns
+#pre_lib_ratio_rL41rL42_mean
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_lib_ratio_rL41rL42_mean <-
+  (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_lib_ratio + BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_lib_ratio) / 2
+#post_pre_ratio_rL41rL42_mean
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_pre_ratio_rL41rL42_mean <-
+  (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_pre_ratio + BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_post_pre_ratio) / 2
+#post_lib_ratio_rL41rL42_mean
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_lib_ratio_rL41rL42_mean <-
+  (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_lib_ratio + BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_post_lib_ratio) / 2
+#tHDR_pre_lib_ratio_rL41rL42_mean
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_pre_lib_ratio_rL41rL42_mean <-
+  (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_pre_lib_ratio + BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_pre_lib_ratio) / 2
+#tHDR_post_pre_ratio_rL41rL42_mean
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_pre_ratio_rL41rL42_mean <-
+  (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_pre_ratio + BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_post_pre_rati) / 2
+#tHDR_post_lib_ratio_rL41rL42_mean
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_lib_ratio_rL41rL42_mean <-
+  (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_lib_ratio + BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_post_lib_ratio) / 2
+#tHDR_rna_pre_ratio_rL41rL42_mean
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_rna_pre_ratio_rL41rL42_mean <-
+  (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_rna_pre_ratio + BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_rna_pre_ratio) / 2
+#tHDR_rna_post_ratio_rL41rL42_mean
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_rna_post_ratio_rL41rL42_mean <-
+  (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_rna_post_ratio + BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_rna_post_ratio) / 2
+
+#weighting by numerator:  <- ((a*a/(a+c))+(c*c/(a+c)))/b
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_lib_ratio_rL41rL42_pre_weighted <-
+  ((BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_pseudo_freq * BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_pseudo_freq / (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_pseudo_freq + BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_pseudo_freq)) +
+     (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_pseudo_freq * BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_pseudo_freq / (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_pseudo_freq + BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_pseudo_freq))) / BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$lib_pseudo_freq
+
+#rL41 pre-freq weighting coefficient (rL41_pre-freq / (rL41 + rL42 pre-freq's))
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_weight <-
+  BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_pseudo_freq / (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_pseudo_freq + BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_pseudo_freq)
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_weight <-
+  BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_pseudo_freq / (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_pseudo_freq + BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_pseudo_freq)
+
+#this will be weighted by denominator:  (rL41_pof/rL41_prf)(rL41_prwc)+(rL42_pof/rL42_prf)*(rL42_prwc)
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_pre_ratio_rL41rL42_pre_weighted <-
+  (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_pseudo_freq / BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_pseudo_freq
+  ) * (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_weight) + (
+    BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_post_pseudo_freq / BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_pseudo_freq
+  ) * (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_weight)
+
+#this will be weighted by denominator:  (rL41_pof/lif')*(rL41_prwc)+(rL42_pof/lif)*(rL42_prwc)
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_lib_ratio_rL41rL42_pre_weighted <-
+  (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_pseudo_freq / BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$lib_pseudo_freq
+  ) * (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_weight) + (
+    BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_post_pseudo_freq / BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$lib_pseudo_freq
+  ) * (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_weight)
+
+#rL41 tHDR_pre-freq weighting coefficient (rL41_tHDR_pre-freq / (rL41 + rL42 pre-freq's))
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_pre_weight <-
+  BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_pre_pseudo_freq / (
+    BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_pre_pseudo_freq + BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_pre_pseudo_freq)
+#rL42 tHDR_pre-freq weighting coefficient
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_pre_weight <-
+  BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_pre_pseudo_freq /
+  (
+    BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_pre_pseudo_freq + BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_pre_pseudo_freq)
+#this will be weighted by denominator:  (rL41_pof/rL41_prf)(rL41_prwc)+(rL42_pof/rL42_prf)*(rL42_prwc)
+#tHDR_post_pre_ratio_rL41rL42_pre_weighted
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_pre_ratio_rL41rL42_pre_weighted <-
+  (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_pseudo_freq / BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_pre_pseudo_freq
+  ) * (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_pre_weight) + (
+    BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_post_pseudo_freq /
+      BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_pre_pseudo_freq
+  ) * (BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_pre_weight)
+```
+
+
+Create syn-normalized (synnorm) values -- modified for BRCA1region,U1,U2 to be median of experiment
+```{r}
+
+#### This if statement determines whether or not to normalise to median of synonymous variants (if more than 10 in library), or to median of all points e.g. for non-coding sequences
+if (length(grep("\\<SYNONYMOUS\\>",BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq)) >= 10) {
+  BRCA1regionrL41_cSNV_pre_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$pre_lib_ratio)
+  BRCA1regionrL41_cSNV_post_pre_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$post_pre_ratio)
+  BRCA1regionrL41_cSNV_post_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$post_lib_ratio)
+  BRCA1regionrL41_tSNV_pre_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$tHDR_pre_lib_ratio)
+  BRCA1regionrL41_tSNV_post_pre_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$tHDR_post_pre_ratio)
+  BRCA1regionrL41_tSNV_post_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$tHDR_post_lib_ratio)
+  BRCA1regionrL41_tSNV_rna_pre_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$tHDR_rna_pre_ratio)
+  BRCA1regionrL41_tSNV_rna_post_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$tHDR_rna_post_ratio)
+  BRCA1regionrL42_cSNV_pre_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$rL42_pre_lib_ratio)
+  BRCA1regionrL42_cSNV_post_pre_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$rL42_post_pre_ratio)
+  
+  BRCA1regionrL42_cSNV_post_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$rL42_post_lib_ratio)
+  BRCA1regionrL42_tSNV_pre_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$rL42_tHDR_pre_lib_ratio)
+  BRCA1regionrL42_tSNV_post_pre_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$rL42_tHDR_post_pre_ratio)
+  BRCA1regionrL42_tSNV_post_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$rL42_tHDR_post_lib_ratio)
+  BRCA1regionrL42_tSNV_rna_pre_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$rL42_tHDR_rna_pre_ratio)
+  BRCA1regionrL42_tSNV_rna_post_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$rL42_tHDR_rna_post_ratio)
+  BRCA1regionrL41rL42a_cSNV_pre_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$pre_lib_ratio_rL41rL42_mean)
+  BRCA1regionrL41rL42a_cSNV_post_pre_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$post_pre_ratio_rL41rL42_mean)
+  BRCA1regionrL41rL42a_cSNV_post_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$post_lib_ratio_rL41rL42_mean)
+  BRCA1regionrL41rL42a_tSNV_pre_lib_med <- 
+    median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$tHDR_pre_lib_ratio_rL41rL42_mean)
+  BRCA1regionrL41rL42a_tSNV_post_pre_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$tHDR_post_pre_ratio_rL41rL42_mean)
+  BRCA1regionrL41rL42a_tSNV_post_lib_med <-
+    median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$tHDR_post_lib_ratio_rL41rL42_mean)
+  BRCA1regionrL41rL42a_tSNV_rna_pre_med <-
+    median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$tHDR_rna_pre_ratio_rL41rL42_mean)
+  BRCA1regionrL41rL42a_tSNV_rna_post_med <-
+    median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$tHDR_rna_post_ratio_rL41rL42_mean)
+  BRCA1regionrL41rL42pw_tSNV_post_pre_med  <-
+    median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$tHDR_post_pre_ratio_rL41rL42_pre_weighted)
+  BRCA1regionrL41rL42pw_cSNV_post_pre_med  <-
+    median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$conseq == "SYNONYMOUS"),]$post_pre_ratio_rL41rL42_pre_weighted)
+} else {
+  BRCA1regionrL41_cSNV_pre_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_lib_ratio)
+  BRCA1regionrL41_cSNV_post_pre_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_pre_ratio)
+  BRCA1regionrL41_cSNV_post_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_lib_ratio)
+  BRCA1regionrL41_tSNV_pre_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_pre_lib_ratio)
+  BRCA1regionrL41_tSNV_post_pre_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_pre_ratio)
+  BRCA1regionrL41_tSNV_post_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_lib_ratio)
+  BRCA1regionrL41_tSNV_rna_pre_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_rna_pre_ratio)
+  BRCA1regionrL41_tSNV_rna_post_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_rna_post_ratio)
+  BRCA1regionrL42_cSNV_pre_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_lib_ratio)
+  BRCA1regionrL42_cSNV_post_pre_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_post_pre_ratio)
+  
+  BRCA1regionrL42_cSNV_post_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_post_lib_ratio)
+  BRCA1regionrL42_tSNV_pre_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_pre_lib_ratio)
+  BRCA1regionrL42_tSNV_post_pre_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_post_pre_ratio)
+  BRCA1regionrL42_tSNV_post_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_post_lib_ratio)
+  BRCA1regionrL42_tSNV_rna_pre_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_rna_pre_ratio)
+  BRCA1regionrL42_tSNV_rna_post_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_rna_post_ratio)
+  BRCA1regionrL41rL42a_cSNV_pre_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_lib_ratio_rL41rL42_mean)
+  BRCA1regionrL41rL42a_cSNV_post_pre_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_pre_ratio_rL41rL42_mean)
+  BRCA1regionrL41rL42a_cSNV_post_lib_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_lib_ratio_rL41rL42_mean)
+  BRCA1regionrL41rL42a_tSNV_pre_lib_med <- 
+    median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_pre_lib_ratio_rL41rL42_mean)
+  BRCA1regionrL41rL42a_tSNV_post_pre_med <- median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_pre_ratio_rL41rL42_mean)
+  BRCA1regionrL41rL42a_tSNV_post_lib_med <-
+    median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_lib_ratio_rL41rL42_mean)
+  BRCA1regionrL41rL42a_tSNV_rna_pre_med <-
+    median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_rna_pre_ratio_rL41rL42_mean)
+  BRCA1regionrL41rL42a_tSNV_rna_post_med <-
+    median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_rna_post_ratio_rL41rL42_mean)
+  BRCA1regionrL41rL42pw_tSNV_post_pre_med  <-
+    median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_pre_ratio_rL41rL42_pre_weighted)
+  BRCA1regionrL41rL42pw_cSNV_post_pre_med  <-
+    median(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_pre_ratio_rL41rL42_pre_weighted)
+}
+
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_lib_ratio_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_lib_ratio/BRCA1regionrL41_cSNV_pre_lib_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_pre_ratio_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_pre_ratio/BRCA1regionrL41_cSNV_post_pre_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_lib_ratio_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_lib_ratio/BRCA1regionrL41_cSNV_post_lib_med
+
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_pre_lib_ratio_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_pre_lib_ratio/BRCA1regionrL41_tSNV_pre_lib_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_pre_ratio_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_pre_ratio/BRCA1regionrL41_tSNV_post_pre_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_lib_ratio_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_lib_ratio/BRCA1regionrL41_tSNV_post_lib_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_rna_pre_ratio_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_rna_pre_ratio/BRCA1regionrL41_tSNV_rna_pre_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_rna_post_ratio_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_rna_post_ratio/BRCA1regionrL41_tSNV_rna_post_med
+
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_lib_ratio_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_pre_lib_ratio/BRCA1regionrL42_cSNV_pre_lib_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_post_pre_ratio_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_post_pre_ratio/BRCA1regionrL42_cSNV_post_pre_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_post_lib_ratio_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_post_lib_ratio/BRCA1regionrL42_cSNV_post_lib_med
+
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_pre_lib_ratio_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_pre_lib_ratio/BRCA1regionrL42_tSNV_pre_lib_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_post_pre_ratio_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_post_pre_ratio/BRCA1regionrL42_tSNV_post_pre_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_post_lib_ratio_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_post_lib_ratio/BRCA1regionrL42_tSNV_post_lib_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_rna_pre_ratio_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_rna_pre_ratio/BRCA1regionrL42_tSNV_rna_pre_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_rna_post_ratio_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$rL42_tHDR_rna_post_ratio/BRCA1regionrL42_tSNV_rna_post_med
+
+###normalize the means
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_lib_ratio_rL41rL42_mean_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$pre_lib_ratio_rL41rL42_mean/BRCA1regionrL41rL42a_cSNV_pre_lib_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_pre_ratio_rL41rL42_mean_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_pre_ratio_rL41rL42_mean/BRCA1regionrL41rL42a_cSNV_post_pre_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_lib_ratio_rL41rL42_mean_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_lib_ratio_rL41rL42_mean/BRCA1regionrL41rL42a_cSNV_post_lib_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_pre_lib_ratio_rL41rL42_mean_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_pre_lib_ratio_rL41rL42_mean/BRCA1regionrL41rL42a_tSNV_pre_lib_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_pre_ratio_rL41rL42_mean_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_pre_ratio_rL41rL42_mean/BRCA1regionrL41rL42a_tSNV_post_pre_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_lib_ratio_rL41rL42_mean_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_lib_ratio_rL41rL42_mean/BRCA1regionrL41rL42a_tSNV_post_lib_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_rna_pre_ratio_rL41rL42_mean_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_rna_pre_ratio_rL41rL42_mean/BRCA1regionrL41rL42a_tSNV_rna_pre_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_rna_post_ratio_rL41rL42_mean_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_rna_post_ratio_rL41rL42_mean/BRCA1regionrL41rL42a_tSNV_rna_post_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_pre_ratio_rL41rL42_pre_weighted_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$tHDR_post_pre_ratio_rL41rL42_pre_weighted/BRCA1regionrL41rL42pw_tSNV_post_pre_med
+BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_pre_ratio_rL41rL42_pre_weighted_synnorm <- BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord$post_pre_ratio_rL41rL42_pre_weighted/BRCA1regionrL41rL42pw_cSNV_post_pre_med
+
+#working intersection dictionary:  BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord
+BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord = which(BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[,'pos']!='REF')
+BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df = BRCA1regionrL41_prog_var_thresh5_df_rL42_int_ord[BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord,]
+BRCA1regionrL41_prog_map_exon_thresh5_df_rL42_int_ord = which(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df[,'cDNApos']!='REF' & BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df[,'cDNApos']!='NA')
+BRCA1regionrL41_prog_map_exon_thresh5_df_rL42_int_ord_df = BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df[BRCA1regionrL41_prog_map_exon_thresh5_df_rL42_int_ord,]
+BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord = which(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df[,'CADD.phred']!='NA')
+BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df = BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df[BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord,]
+BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense <- BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df[which(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$conseq=='NON_SYNONYMOUS'),]
+
+
+```
+Replicate Plotting
+------------------
+
+```{r}
+#correlation between intersection of replicates, log-2 normalized:
+BRCA1regionrL41rL42_cSNV_rL41_post_pre_by_rL42_post_pre_cor_s <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$post_pre_ratio_synnorm),
+    log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_post_pre_ratio_synnorm),
+    method = 'spearman')
+BRCA1regionrL41rL42_cSNV_rL41_post_pre_by_rL42_post_pre_cor_s
+
+BRCA1regionrL41rL42_cSNV_rL41_post_pre_by_rL42_post_pre_cor_p <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$post_pre_ratio_synnorm),
+    log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_post_pre_ratio_synnorm),
+    method = 'pearson')
+BRCA1regionrL41rL42_cSNV_rL41_post_pre_by_rL42_post_pre_cor_p
+```
+
+
+
+```{r}
+#correlation between intersection of replicates, log-2 normalized:
+BRCA1regionrL41rL42_cSNV_rL41_post_lib_by_rL42_post_lib_cor_s <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$post_lib_ratio_synnorm),
+    log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_post_lib_ratio_synnorm),
+    method = 'spearman')
+BRCA1regionrL41rL42_cSNV_rL41_post_lib_by_rL42_post_lib_cor_s
+
+BRCA1regionrL41rL42_cSNV_rL41_post_lib_by_rL42_post_lib_cor_p <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$post_lib_ratio_synnorm),
+    log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_post_lib_ratio_synnorm),
+    method = 'pearson')
+BRCA1regionrL41rL42_cSNV_rL41_post_lib_by_rL42_post_lib_cor_p
+```
+
+```{r}
+#correlation between intersection of replicates, log-2 normalized:
+BRCA1regionrL41rL42_tSNV_rL41_tHDR_post_pre_by_rL42_tHDR_post_pre_cor_s <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$tHDR_post_pre_ratio_synnorm),
+    log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_tHDR_post_pre_ratio_synnorm),
+    method = 'spearman')
+BRCA1regionrL41rL42_tSNV_rL41_tHDR_post_pre_by_rL42_tHDR_post_pre_cor_s
+
+BRCA1regionrL41rL42_tSNV_rL41_tHDR_post_pre_by_rL42_tHDR_post_pre_cor_p <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$tHDR_post_pre_ratio_synnorm),
+    log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_tHDR_post_pre_ratio_synnorm),
+    method = 'pearson')
+BRCA1regionrL41rL42_tSNV_rL41_tHDR_post_pre_by_rL42_tHDR_post_pre_cor_p
+```
+
+```{r}
+#correlation between intersection of replicates, log-2 normalized:
+BRCA1regionrL41rL42_tSNV_rL41_tHDR_post_lib_by_rL42_tHDR_post_lib_cor_s <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$tHDR_post_lib_ratio_synnorm),
+    log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_tHDR_post_lib_ratio_synnorm),
+    method = 'spearman')
+BRCA1regionrL41rL42_tSNV_rL41_tHDR_post_lib_by_rL42_tHDR_post_lib_cor_s
+
+BRCA1regionrL41rL42_tSNV_rL41_tHDR_post_lib_by_rL42_tHDR_post_lib_cor_p <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$tHDR_post_lib_ratio_synnorm),
+    log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_tHDR_post_lib_ratio_synnorm),
+    method = 'pearson')
+BRCA1regionrL41rL42_tSNV_rL41_tHDR_post_lib_by_rL42_tHDR_post_lib_cor_p
+```
+
+```{r}
+#correlation between intersection of replicates, log-2 normalized:
+BRCA1regionrL41rL42_tSNV_rL41_tHDR_rna_pre_by_rL42_tHDR_rna_pre_cor_s <-
+  cor(log2(BRCA1regionrL41_prog_map_exon_thresh5_df_rL42_int_ord_df$tHDR_rna_pre_ratio_synnorm), 
+      log2(BRCA1regionrL41_prog_map_exon_thresh5_df_rL42_int_ord_df$rL42_tHDR_rna_pre_ratio_synnorm),
+    method = 'spearman')
+BRCA1regionrL41rL42_tSNV_rL41_tHDR_rna_pre_by_rL42_tHDR_rna_pre_cor_s
+
+BRCA1regionrL41rL42_tSNV_rL41_tHDR_rna_pre_by_rL42_tHDR_rna_pre_cor_p <-
+  cor(log2(BRCA1regionrL41_prog_map_exon_thresh5_df_rL42_int_ord_df$tHDR_rna_pre_ratio_synnorm),
+      log2(BRCA1regionrL41_prog_map_exon_thresh5_df_rL42_int_ord_df$rL42_tHDR_rna_pre_ratio_synnorm),
+    method = 'pearson')
+BRCA1regionrL41rL42_tSNV_rL41_tHDR_rna_pre_by_rL42_tHDR_rna_pre_cor_p
+```
+
+
+```{r}
+#correlations between replicates, pre_freq reads:
+BRCA1regionrL41rL42_cSNV_rL41_pre_by_rL42_pre_cor_s <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$pre_freq),
+      log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_pre_freq),
+      method = 'spearman')
+BRCA1regionrL41rL42_cSNV_rL41_pre_by_rL42_pre_cor_s
+
+BRCA1regionrL41rL42_cSNV_rL41_pre_by_rL42_pre_cor_p <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$pre_freq),
+      log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_pre_freq),
+      method = 'pearson')
+BRCA1regionrL41rL42_cSNV_rL41_pre_by_rL42_pre_cor_p
+```
+
+
+```{r}
+#correlations between replicates, post_freq reads:
+BRCA1regionrL41rL42_cSNV_rL41_post_by_rL42_post_cor_s <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$post_freq),
+      log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_post_freq),
+      method = 'spearman')
+BRCA1regionrL41rL42_cSNV_rL41_post_by_rL42_post_cor_s
+
+BRCA1regionrL41rL42_cSNV_rL41_post_by_rL42_post_cor_p <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$post_pseudo_freq),
+      log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_post_pseudo_freq),
+      method = 'pearson')
+BRCA1regionrL41rL42_cSNV_rL41_post_by_rL42_post_cor_p
+```
+
+```{r}
+
+
+#correlations between replicates, pre_lib_ratio:
+BRCA1regionrL41rL42_cSNV_rL41_pre_lib_by_rL42_pre_lib_cor_s <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$pre_lib_ratio_synnorm),
+      log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_pre_lib_ratio_synnorm),
+      method = 'spearman')
+BRCA1regionrL41rL42_cSNV_rL41_pre_lib_by_rL42_pre_lib_cor_s
+
+BRCA1regionrL41rL42_cSNV_rL41_pre_lib_by_rL42_pre_lib_cor_p <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$pre_lib_ratio_synnorm),
+    log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_pre_lib_ratio_synnorm),
+    method = 'pearson')
+BRCA1regionrL41rL42_cSNV_rL41_pre_lib_by_rL42_pre_lib_cor_p
+```
+
+```{r}
+# pre_lib_ratio (average across replicates) by position
+BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df_pre_pos_effect_intercept = coef(lm(log2(pre_lib_ratio_rL41rL42_mean_synnorm) ~ pos,
+  data = BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df))[1]
+
+BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df_pre_pos_effect_slope = coef(lm(log2(pre_lib_ratio_rL41rL42_mean_synnorm) ~ pos, 
+  data = BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df))[2]
+BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df_pre_pos_effect_slope #decrease in editing efficiency per bp
+
+
+```
+
+```{r}
+
+
+BRCA1regionrL41rL42_tSNV_rL41_pre_lib_by_rL42_pre_lib_cor_s <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$tHDR_pre_lib_ratio_synnorm),
+      log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_tHDR_pre_lib_ratio_synnorm),
+      method = 'spearman')
+BRCA1regionrL41rL42_tSNV_rL41_pre_lib_by_rL42_pre_lib_cor_s
+```
+
+
+
+```{r}
+BRCA1regionrL41rL42_tSNV_rL41_post_lib_by_rL42_post_lib_cor_s <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$tHDR_post_lib_ratio_synnorm),
+      log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_tHDR_post_lib_ratio_synnorm),
+      method = 'spearman')
+BRCA1regionrL41rL42_tSNV_rL41_post_lib_by_rL42_post_lib_cor_s
+```
+
+
+
+```{r}
+BRCA1regionrL41rL42_tSNV_rL41_post_pre_by_rL42_post_pre_cor_s <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$tHDR_post_pre_ratio_synnorm),
+      log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_tHDR_post_pre_ratio_synnorm),
+      method = 'spearman')
+BRCA1regionrL41rL42_tSNV_rL41_post_pre_by_rL42_post_pre_cor_s
+```
+
+
+
+```{r}
+BRCA1regionrL41rL42_tSNV_rL41_rna_pre_by_rL42_rna_pre_cor_s <-
+  cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$tHDR_rna_pre_ratio_synnorm),
+      log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_tHDR_rna_pre_ratio_synnorm),
+      method = 'spearman')
+BRCA1regionrL41rL42_tSNV_rL41_rna_pre_by_rL42_rna_pre_cor_s
+```
+
+```{r}
+#post_lib_ratio (mean_synnorm across reps) by position
+BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df_post_pos_effect_intercept = coef(lm(log2(post_lib_ratio_rL41rL42_mean_synnorm) ~ pos, data = BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df))[1]
+BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df_post_pos_effect_slope = coef(lm(log2(post_lib_ratio_rL41rL42_mean_synnorm) ~ pos,
+ data = BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df))[2]
+BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df_post_pos_effect_slope #decrease in editing efficiency per bp
+
+```
+
+```{r}
+#post_pre_ratio_rL41rL42_mean_synnorm by position
+BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df_pp_pos_effect_intercept = coef(lm(log2(post_pre_ratio_rL41rL42_mean_synnorm) ~ pos,
+  data = BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df))[1]
+BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df_pp_pos_effect_slope = coef(lm(log2(post_pre_ratio_rL41rL42_mean_synnorm) ~ pos, 
+  data = BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df))[2]
+BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df_pp_pos_effect_slope #decrease in editing efficiency per bp
+
+```
+
+
+Comparisons to CADD
+===================
+
+```{r}
+#calculate post_pre_ratio_synnorm CADD correlation using rL41:
+BRCA1regionrL41_cSNV_post_pre_by_cadd_cor_s = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$post_pre_ratio_synnorm),
+as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+method = 'spearman')
+BRCA1regionrL41_cSNV_post_pre_by_cadd_cor_s
+```
+
+
+```{r}
+#calculate post_pre_ratio_synnorm CADD correlation using rL42:
+BRCA1regionrL42_cSNV_post_pre_by_cadd_cor_s = cor(
+  log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$rL42_post_pre_ratio_synnorm),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+  method = 'spearman')
+BRCA1regionrL42_cSNV_post_pre_by_cadd_cor_s
+```
+
+```{r}
+
+#calculate post_lib_ratio_synnorm CADD correlation using rL41:
+BRCA1regionrL41_cSNV_post_lib_by_cadd_cor_s = cor(
+  log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$post_lib_ratio_synnorm),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+  method = 'spearman')
+BRCA1regionrL41_cSNV_post_lib_by_cadd_cor_s
+```
+
+```{r}
+#calculate post_lib_ratio_synnorm CADD correlation using rL42:
+BRCA1regionrL42_cSNV_post_lib_by_cadd_cor_s = cor(
+  log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$rL42_post_lib_ratio_synnorm),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+  method = 'spearman')
+BRCA1regionrL42_cSNV_post_lib_by_cadd_cor_s
+```
+
+
+```{r}
+#calculate tHDR_post_pre_ratio_synnorm CADD correlation using rL41:
+BRCA1regionrL41_tSNV_post_pre_by_cadd_cor_s = cor(
+  log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$tHDR_post_pre_ratio_synnorm),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+  method = 'spearman')
+BRCA1regionrL41_tSNV_post_pre_by_cadd_cor_s
+```
+
+
+```{r}
+#calculate tHDR_post_pre_ratio_synnorm CADD correlation using rL42:
+BRCA1regionrL42_tSNV_post_pre_by_cadd_cor_s = cor(
+  log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$rL42_tHDR_post_pre_ratio_synnorm),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+  method = 'spearman')
+BRCA1regionrL42_tSNV_post_pre_by_cadd_cor_s
+```
+
+```{r}
+
+
+#calculate tHDR_post_lib_ratio_synnorm CADD correlation using rL41:
+BRCA1regionrL41_tSNV_post_lib_by_cadd_cor_s = cor(
+  log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$tHDR_post_lib_ratio_synnorm),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+  method = 'spearman')
+BRCA1regionrL41_tSNV_post_lib_by_cadd_cor_s
+```
+
+```{r}
+
+
+#calculate tHDR_post_lib_ratio_synnorm CADD correlation using rL42:
+BRCA1regionrL42_tSNV_post_lib_by_cadd_cor_s = cor(
+  log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$rL42_tHDR_post_lib_ratio_synnorm),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+  method = 'spearman')
+BRCA1regionrL42_tSNV_post_lib_by_cadd_cor_s
+```
+
+```{r}
+#calculate CADD correlation using average:
+BRCA1regionrL41rL42a_cSNV_pre_lib_by_cadd_cor_s = cor(
+  log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$pre_lib_ratio_rL41rL42_mean_synnorm),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+  method = 'spearman')
+BRCA1regionrL41rL42a_cSNV_pre_lib_by_cadd_cor_s
+```
+
+```{r}
+
+#calculate CADD correlation using weighted averages:
+BRCA1regionrL41rL42w_cSNV_pre_lib_by_cadd_cor_s = cor(
+  log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$pre_lib_ratio_rL41rL42_pre_weighted),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+  method = 'spearman')
+BRCA1regionrL41rL42w_cSNV_pre_lib_by_cadd_cor_s
+```
+
+```{r}
+
+#calculate CADD correlation using average:
+BRCA1regionrL41rL42a_cSNV_post_pre_by_cadd_cor_s = cor(
+  log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$post_pre_ratio_rL41rL42_mean_synnorm),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+  method = 'spearman')
+BRCA1regionrL41rL42a_cSNV_post_pre_by_cadd_cor_s
+```
+
+```{r}
+
+#calculate CADD correlation using weighted averages:
+BRCA1regionrL41rL42w_cSNV_post_pre_by_cadd_cor_s = cor(
+  log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$post_pre_ratio_rL41rL42_pre_weighted_synnorm),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+  method = 'spearman')
+BRCA1regionrL41rL42w_cSNV_post_pre_by_cadd_cor_s
+```
+
+```{r}
+
+#calculate CADD correlation using average:
+BRCA1regionrL41rL42a_cSNV_post_lib_by_cadd_cor_s = cor(
+  log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$post_lib_ratio_rL41rL42_mean_synnorm),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+  method = 'spearman')
+BRCA1regionrL41rL42a_cSNV_post_lib_by_cadd_cor_s
+```
+
+```{r}
+
+
+#calculate CADD correlation using weighted averages:
+BRCA1regionrL41rL42w_cSNV_post_lib_by_cadd_cor_s = cor(
+  log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$post_lib_ratio_rL41rL42_pre_weighted),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+  method = 'spearman')
+BRCA1regionrL41rL42w_cSNV_post_lib_by_cadd_cor_s
+```
+
+```{r}
+
+
+#calculate CADD correlation using average:
+BRCA1regionrL41rL42a_tSNV_pre_lib_by_cadd_cor_s = cor(
+  log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$tHDR_pre_lib_ratio_rL41rL42_mean_synnorm),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+  method = 'spearman')
+BRCA1regionrL41rL42a_tSNV_pre_lib_by_cadd_cor_s
+```
+
+```{r}
+
+
+#calculate CADD correlation using average:
+BRCA1regionrL41rL42a_tSNV_post_pre_by_cadd_cor_s = cor(
+  log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$tHDR_post_pre_ratio_rL41rL42_mean_synnorm),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+  method = 'spearman')
+BRCA1regionrL41rL42a_tSNV_post_pre_by_cadd_cor_s
+```
+
+```{r}
+
+#calculate CADD correlation using weighted averages:
+BRCA1regionrL41rL42w_tSNV_post_pre_by_cadd_cor_s = cor(
+  log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$tHDR_post_pre_ratio_rL41rL42_pre_weighted_synnorm),
+  as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+  method = 'spearman')
+BRCA1regionrL41rL42w_tSNV_post_pre_by_cadd_cor_s
+```
+
+
+Correlations for Heatmapping
+------------
+```{r}
+#final correlations to save as variables for heatmapping:
+BRCA1regionrL41_cSNV_pre_lib_cors = cor(log2(BRCA1regionrL41_prog_map_thresh5_df$lib_pseudo_freq),
+                                   log2(BRCA1regionrL41_prog_map_thresh5_df$pre_pseudo_freq),
+                                   method = 'spearman')
+BRCA1regionrL41_tSNV_pre_lib_cors = cor(log2(BRCA1regionrL41_prog_map_thresh5_df$tHDR_lib_pseudo_freq),
+                                   log2(BRCA1regionrL41_prog_map_thresh5_df$tHDR_pre_pseudo_freq),
+                                   method='spearman')
+BRCA1regionrL41_cSNV_post_lib_cors = cor(log2(BRCA1regionrL41_prog_map_thresh5_df$lib_pseudo_freq),
+                                    log2(BRCA1regionrL41_prog_map_thresh5_df$post_pseudo_freq),
+                                    method='spearman')
+BRCA1regionrL41_tSNV_post_lib_cors = cor(log2(BRCA1regionrL41_prog_map_thresh5_df$tHDR_lib_pseudo_freq),
+                                    log2(BRCA1regionrL41_prog_map_thresh5_df$tHDR_post_pseudo_freq),
+                                    method='spearman')
+BRCA1regionrL41_cSNV_post_pre_cors = cor(log2(BRCA1regionrL41_prog_map_thresh5_df$post_pseudo_freq),
+                                    log2(BRCA1regionrL41_prog_map_thresh5_df$pre_pseudo_freq),
+                                    method='spearman')
+BRCA1regionrL41_tSNV_post_pre_cors = cor(log2(BRCA1regionrL41_prog_map_thresh5_df$tHDR_post_pseudo_freq),
+                                    log2(BRCA1regionrL41_prog_map_thresh5_df$tHDR_pre_pseudo_freq),
+                                    method='spearman')
+BRCA1regionrL41_cSNV_rna_lib_cors = cor(log2(BRCA1regionrL41_prog_map_exon_thresh5_df$lib_pseudo_freq),
+                                   log2(BRCA1regionrL41_prog_map_exon_thresh5_df$rna_pseudo_freq),
+                                   method='spearman')
+BRCA1regionrL41_tSNV_rna_lib_cors = cor(log2(BRCA1regionrL41_prog_map_exon_thresh5_df$tHDR_lib_pseudo_freq),
+                                   log2(BRCA1regionrL41_prog_map_exon_thresh5_df$tHDR_rna_pseudo_freq),
+                                   method='spearman')
+BRCA1regionrL41_cSNV_rna_pre_cors = cor(log2(BRCA1regionrL41_prog_map_exon_thresh5_df$pre_pseudo_freq),
+                                   log2(BRCA1regionrL41_prog_map_exon_thresh5_df$rna_pseudo_freq),
+                                   method='spearman')
+BRCA1regionrL41_tSNV_rna_pre_cors = cor(log2(BRCA1regionrL41_prog_map_exon_thresh5_df$tHDR_rna_pseudo_freq),
+                                   log2(BRCA1regionrL41_prog_map_exon_thresh5_df$tHDR_pre_pseudo_freq),
+                                   method='spearman')
+BRCA1regionrL41rL42_cSNV_pre_cors = cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$pre_freq),
+                                log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_pre_freq),
+                                   method = 'spearman')
+BRCA1regionrL41rL42_tSNV_pre_cors = cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$tHDR_pre_pseudo_freq),
+                                   log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_tHDR_pre_pseudo_freq),
+                                   method='spearman')
+BRCA1regionrL41rL42_cSNV_pre_lib_ratio_cors = cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$pre_lib_ratio),
+                                             log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_pre_lib_ratio),
+                                             method='spearman')
+BRCA1regionrL41rL42_tSNV_pre_lib_ratio_cors = cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$tHDR_pre_lib_ratio),
+                                             log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_tHDR_pre_lib_ratio),
+                                             method='spearman')
+BRCA1regionrL41rL42_cSNV_post_cors = cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$post_freq),
+                                    log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_post_freq),
+                                    method='spearman')
+BRCA1regionrL41rL42_tSNV_post_cors = cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$tHDR_post_pseudo_freq),
+                                    log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_tHDR_post_pseudo_freq),
+                                    method='spearman')
+BRCA1regionrL41rL42_cSNV_post_lib_ratio_cors = cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$post_lib_ratio_synnorm),
+                                              log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_post_lib_ratio_synnorm),
+                                              method='spearman')
+BRCA1regionrL41rL42_tSNV_post_lib_ratio_cors = cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$tHDR_post_lib_ratio_synnorm),
+                                              log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_tHDR_post_lib_ratio_synnorm),
+                                              method='spearman')
+BRCA1regionrL41rL42_cSNV_post_pre_ratio_cors = cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$post_pre_ratio_synnorm),
+                                              log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_post_pre_ratio_synnorm),
+                                              method='spearman')
+BRCA1regionrL41rL42_tSNV_post_pre_ratio_cors = cor(log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$tHDR_post_pre_ratio_synnorm),
+                                              log2(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_tHDR_post_pre_ratio_synnorm),
+                                              method='spearman')
+BRCA1regionrL41rL42_cSNV_rna_cors = cor(log2(BRCA1regionrL41_prog_map_exon_thresh5_df_rL42_int_ord_df$rna_freq),
+                                   log2(BRCA1regionrL41_prog_map_exon_thresh5_df_rL42_int_ord_df$rL42_rna_freq),
+                                   method='spearman')
+BRCA1regionrL41rL42_tSNV_rna_cors = cor(log2(BRCA1regionrL41_prog_map_exon_thresh5_df_rL42_int_ord_df$tHDR_rna_pseudo_freq),
+                                   log2(BRCA1regionrL41_prog_map_exon_thresh5_df_rL42_int_ord_df$rL42_tHDR_rna_pseudo_freq),
+                                   method='spearman')
+BRCA1regionrL41rL42_tSNV_rna_pre_ratio_cors = cor(log2(BRCA1regionrL41_prog_map_exon_thresh5_df_rL42_int_ord_df$tHDR_rna_pre_ratio_synnorm),
+                                             log2(BRCA1regionrL41_prog_map_exon_thresh5_df_rL42_int_ord_df$rL42_tHDR_rna_pre_ratio_synnorm),
+                                             method='spearman')
+BRCA1regionrL41_cSNV_pre_lib_ratio_cadd_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_df$pre_lib_ratio),
+                                              as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_df$CADD.phred)),
+                                              method='spearman')
+BRCA1regionrL41_tSNV_pre_lib_ratio_cadd_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_df$tHDR_pre_lib_ratio),
+                                              as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_df$CADD.phred)),
+                                              method='spearman')
+BRCA1regionrL41_cSNV_post_lib_ratio_cadd_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_df$post_lib_ratio),
+                                               as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_df$CADD.phred)),
+                                               method='spearman')
+BRCA1regionrL41_tSNV_post_lib_ratio_cadd_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_df$tHDR_post_lib_ratio),
+                                               as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_df$CADD.phred)),
+                                               method='spearman')
+BRCA1regionrL41_cSNV_post_pre_ratio_cadd_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_df$post_pre_ratio),
+                                               as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_df$CADD.phred)),
+                                               method='spearman')
+BRCA1regionrL41_tSNV_post_pre_ratio_cadd_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_df$tHDR_post_pre_ratio),
+                                               as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_df$CADD.phred)),
+                                               method='spearman')
+BRCA1regionrL41_cSNV_post_pre_ratio_cadd_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$post_pre_ratio),
+                                                        as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$CADD.phred)),
+                                                        method='spearman')
+BRCA1regionrL41_tSNV_post_pre_ratio_cadd_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$tHDR_post_pre_ratio),
+                                                        as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$CADD.phred)),
+                                                        method='spearman')
+BRCA1regionrL41_cSNV_post_pre_ratio_polyphen_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$post_pre_ratio),
+                                                            as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$polyphen.val)),
+                                                            method='spearman')
+BRCA1regionrL41_tSNV_post_pre_ratio_polyphen_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$tHDR_post_pre_ratio),
+                                                            as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$polyphen.val)),
+                                                            method='spearman')
+BRCA1regionrL41_cSNV_post_pre_ratio_grantham_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$post_pre_ratio),
+                                                            as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$Grantham)),
+                                                            method='spearman')
+BRCA1regionrL41_tSNV_post_pre_ratio_grantham_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$tHDR_post_pre_ratio),
+                                                            as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$Grantham)),
+                                                            method='spearman')
+BRCA1regionrL41rL42a_cSNV_pre_lib_ratio_cadd_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$pre_lib_ratio_rL41rL42_mean_synnorm),
+                                                   as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+                                                   method='spearman')
+BRCA1regionrL41rL42a_tSNV_pre_lib_ratio_cadd_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$tHDR_pre_lib_ratio_rL41rL42_mean_synnorm),
+                                                   as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+                                                   method='spearman')
+BRCA1regionrL41rL42a_cSNV_post_lib_ratio_cadd_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$post_lib_ratio_rL41rL42_mean_synnorm),
+                                                    as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+                                                    method='spearman')
+BRCA1regionrL41rL42a_tSNV_post_lib_ratio_cadd_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$tHDR_post_lib_ratio_rL41rL42_mean_synnorm),
+                                                    as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+                                                    method='spearman')
+BRCA1regionrL41rL42a_cSNV_post_pre_ratio_cadd_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$post_pre_ratio_rL41rL42_mean_synnorm),
+                                                    as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+                                                    method='spearman')
+BRCA1regionrL41rL42a_tSNV_post_pre_ratio_cadd_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$tHDR_post_pre_ratio_rL41rL42_mean_synnorm),
+                                                    as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+                                                    method='spearman')
+BRCA1regionrL41rL42a_cSNV_post_pre_ratio_cadd_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$post_pre_ratio_rL41rL42_mean_synnorm),
+                                                             as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$CADD.phred)),
+                                                             method='spearman')
+BRCA1regionrL41rL42a_tSNV_post_pre_ratio_cadd_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$tHDR_post_pre_ratio_rL41rL42_mean_synnorm),
+                                                             as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$CADD.phred)),
+                                                             method='spearman')
+BRCA1regionrL41rL42a_cSNV_post_pre_ratio_polyphen_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$post_pre_ratio_rL41rL42_mean_synnorm),
+                                                                 as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$polyphen.val)),
+                                                                 method='spearman')
+BRCA1regionrL41rL42a_tSNV_post_pre_ratio_polyphen_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$tHDR_post_pre_ratio_rL41rL42_mean_synnorm),
+                                                                 as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$polyphen.val)),
+                                                                 method='spearman')
+BRCA1regionrL41rL42a_cSNV_post_pre_ratio_grantham_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$post_pre_ratio_rL41rL42_mean_synnorm),
+                                                                 as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$Grantham)),
+                                                                 method='spearman')
+BRCA1regionrL41rL42a_tSNV_post_pre_ratio_grantham_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$tHDR_post_pre_ratio_rL41rL42_mean_synnorm),
+                                                                 as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$Grantham)),
+                                                                 method='spearman')
+BRCA1regionrL41rL42w_cSNV_pre_lib_ratio_cadd_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$pre_lib_ratio_rL41rL42_pre_weighted),
+                                                   as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+                                                   method='spearman')
+BRCA1regionrL41rL42w_cSNV_post_lib_ratio_cadd_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$post_lib_ratio_rL41rL42_pre_weighted),
+                                                    as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+                                                    method='spearman')
+BRCA1regionrL41rL42w_cSNV_post_pre_ratio_cadd_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$post_pre_ratio_rL41rL42_pre_weighted_synnorm),
+                                                    as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+                                                    method='spearman')
+BRCA1regionrL41rL42w_tSNV_post_pre_ratio_cadd_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$tHDR_post_pre_ratio_rL41rL42_pre_weighted_synnorm),
+                                                    as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df$CADD.phred)),
+                                                    method='spearman')
+
+BRCA1regionrL41_cors <- c("BRCA1regionrL41",
+                     BRCA1regionrL41_cSNV_pre_lib_cors,
+                     BRCA1regionrL41_tSNV_pre_lib_cors,
+                     BRCA1regionrL41_cSNV_post_lib_cors,
+                     BRCA1regionrL41_tSNV_post_lib_cors,
+                     BRCA1regionrL41_cSNV_post_pre_cors,
+                     BRCA1regionrL41_tSNV_post_pre_cors,
+                     BRCA1regionrL41_cSNV_rna_lib_cors,
+                     BRCA1regionrL41_tSNV_rna_lib_cors,
+                     BRCA1regionrL41_cSNV_rna_pre_cors,
+                     BRCA1regionrL41_tSNV_rna_pre_cors,
+                     BRCA1regionrL41rL42_cSNV_pre_cors,
+                     BRCA1regionrL41rL42_tSNV_pre_cors,
+                     BRCA1regionrL41rL42_cSNV_pre_lib_ratio_cors,
+                     BRCA1regionrL41rL42_tSNV_pre_lib_ratio_cors,
+                     BRCA1regionrL41rL42_cSNV_post_cors,
+                     BRCA1regionrL41rL42_tSNV_post_cors,
+                     BRCA1regionrL41rL42_cSNV_post_lib_ratio_cors,
+                     BRCA1regionrL41rL42_tSNV_post_lib_ratio_cors,
+                     BRCA1regionrL41rL42_cSNV_post_pre_ratio_cors,
+                     BRCA1regionrL41rL42_tSNV_post_pre_ratio_cors,
+                     BRCA1regionrL41rL42_cSNV_rna_cors,
+                     BRCA1regionrL41rL42_tSNV_rna_cors,
+                     BRCA1regionrL41rL42_tSNV_rna_pre_ratio_cors,
+                     BRCA1regionrL41_cSNV_pre_lib_ratio_cadd_cors,
+                     BRCA1regionrL41_tSNV_pre_lib_ratio_cadd_cors,
+                     BRCA1regionrL41_cSNV_post_lib_ratio_cadd_cors,
+                     BRCA1regionrL41_tSNV_post_lib_ratio_cadd_cors,
+                     BRCA1regionrL41_cSNV_post_pre_ratio_cadd_cors,
+                     BRCA1regionrL41_tSNV_post_pre_ratio_cadd_cors,
+                     BRCA1regionrL41_cSNV_post_pre_ratio_cadd_missense_cors,
+                     BRCA1regionrL41_tSNV_post_pre_ratio_cadd_missense_cors,
+                     BRCA1regionrL41_cSNV_post_pre_ratio_polyphen_missense_cors,
+                     BRCA1regionrL41_tSNV_post_pre_ratio_polyphen_missense_cors,
+                     BRCA1regionrL41_cSNV_post_pre_ratio_grantham_missense_cors,
+                     BRCA1regionrL41_tSNV_post_pre_ratio_grantham_missense_cors,
+                     BRCA1regionrL41rL42a_cSNV_pre_lib_ratio_cadd_cors,
+                     BRCA1regionrL41rL42a_tSNV_pre_lib_ratio_cadd_cors,
+                     BRCA1regionrL41rL42a_cSNV_post_lib_ratio_cadd_cors,
+                     BRCA1regionrL41rL42a_tSNV_post_lib_ratio_cadd_cors,
+                     BRCA1regionrL41rL42a_cSNV_post_pre_ratio_cadd_cors,
+                     BRCA1regionrL41rL42a_tSNV_post_pre_ratio_cadd_cors,
+                     BRCA1regionrL41rL42a_cSNV_post_pre_ratio_cadd_missense_cors,
+                     BRCA1regionrL41rL42a_tSNV_post_pre_ratio_cadd_missense_cors,
+                     BRCA1regionrL41rL42a_cSNV_post_pre_ratio_polyphen_missense_cors,
+                     BRCA1regionrL41rL42a_tSNV_post_pre_ratio_polyphen_missense_cors,
+                     BRCA1regionrL41rL42a_cSNV_post_pre_ratio_grantham_missense_cors,
+                     BRCA1regionrL41rL42a_tSNV_post_pre_ratio_grantham_missense_cors,
+                     BRCA1regionrL41rL42w_cSNV_pre_lib_ratio_cadd_cors,
+                     BRCA1regionrL41rL42w_cSNV_post_lib_ratio_cadd_cors,
+                     BRCA1regionrL41rL42w_cSNV_post_pre_ratio_cadd_cors,
+                     BRCA1regionrL41rL42w_tSNV_post_pre_ratio_cadd_cors)
+```
+Replicate 2
+```{r}
+#replicate 2 assignments for rL42-specific scores...
+BRCA1regionrL42_cSNV_pre_lib_cors = cor(log2(BRCA1regionrL42_prog_map_thresh5_df$lib_pseudo_freq),
+                                   log2(BRCA1regionrL42_prog_map_thresh5_df$pre_pseudo_freq),
+                                   method='spearman')
+BRCA1regionrL42_tSNV_pre_lib_cors = cor(log2(BRCA1regionrL42_prog_map_thresh5_df$tHDR_lib_pseudo_freq),
+                                   log2(BRCA1regionrL42_prog_map_thresh5_df$tHDR_pre_pseudo_freq),
+                                   method='spearman')
+BRCA1regionrL42_cSNV_post_lib_cors = cor(log2(BRCA1regionrL42_prog_map_thresh5_df$lib_pseudo_freq),
+                                    log2(BRCA1regionrL42_prog_map_thresh5_df$post_pseudo_freq),
+                                    method='spearman')
+BRCA1regionrL42_tSNV_post_lib_cors = cor(log2(BRCA1regionrL42_prog_map_thresh5_df$tHDR_lib_pseudo_freq),
+                                    log2(BRCA1regionrL42_prog_map_thresh5_df$tHDR_post_pseudo_freq),
+                                    method='spearman')
+BRCA1regionrL42_cSNV_post_pre_cors = cor(log2(BRCA1regionrL42_prog_map_thresh5_df$post_pseudo_freq),
+                                    log2(BRCA1regionrL42_prog_map_thresh5_df$pre_pseudo_freq),
+                                    method='spearman')
+BRCA1regionrL42_tSNV_post_pre_cors = cor(log2(BRCA1regionrL42_prog_map_thresh5_df$tHDR_post_pseudo_freq),
+                                    log2(BRCA1regionrL42_prog_map_thresh5_df$tHDR_pre_pseudo_freq),
+                                    method='spearman')
+BRCA1regionrL42_cSNV_rna_lib_cors = cor(log2(BRCA1regionrL42_prog_map_exon_thresh5_df$lib_pseudo_freq),
+                                   log2(BRCA1regionrL42_prog_map_exon_thresh5_df$rna_pseudo_freq),
+                                   method='spearman')
+BRCA1regionrL42_tSNV_rna_lib_cors = cor(log2(BRCA1regionrL42_prog_map_exon_thresh5_df$tHDR_lib_pseudo_freq),
+                                   log2(BRCA1regionrL42_prog_map_exon_thresh5_df$tHDR_rna_pseudo_freq),
+                                   method='spearman')
+BRCA1regionrL42_cSNV_rna_pre_cors = cor(log2(BRCA1regionrL42_prog_map_exon_thresh5_df$pre_pseudo_freq),
+                                   log2(BRCA1regionrL42_prog_map_exon_thresh5_df$rna_pseudo_freq),
+                                   method='spearman')
+BRCA1regionrL42_tSNV_rna_pre_cors = cor(log2(BRCA1regionrL42_prog_map_exon_thresh5_df$tHDR_rna_pseudo_freq),
+                                   log2(BRCA1regionrL42_prog_map_exon_thresh5_df$tHDR_pre_pseudo_freq),
+                                   method='spearman')
+# rL42 switching to the df with CADD scores to make correlations with CADD
+BRCA1regionrL42_cSNV_pre_lib_ratio_cadd_cors = cor(log2(BRCA1regionrL42_prog_map_CADD_df$pre_lib_ratio),
+                                              as.numeric(as.character(BRCA1regionrL42_prog_map_CADD_df$CADD.phred)),
+                                              method='spearman')
+BRCA1regionrL42_tSNV_pre_lib_ratio_cadd_cors = cor(log2(BRCA1regionrL42_prog_map_CADD_df$tHDR_pre_lib_ratio),
+                                              as.numeric(as.character(BRCA1regionrL42_prog_map_CADD_df$CADD.phred)),
+                                              method='spearman')
+BRCA1regionrL42_cSNV_post_lib_ratio_cadd_cors = cor(log2(BRCA1regionrL42_prog_map_CADD_df$post_lib_ratio),
+                                               as.numeric(as.character(BRCA1regionrL42_prog_map_CADD_df$CADD.phred)),
+                                               method='spearman')
+BRCA1regionrL42_tSNV_post_lib_ratio_cadd_cors = cor(log2(BRCA1regionrL42_prog_map_CADD_df$tHDR_post_lib_ratio),
+                                               as.numeric(as.character(BRCA1regionrL42_prog_map_CADD_df$CADD.phred)),
+                                               method='spearman')
+BRCA1regionrL42_cSNV_post_pre_ratio_cadd_cors = cor(log2(BRCA1regionrL42_prog_map_CADD_df$post_pre_ratio),
+                                               as.numeric(as.character(BRCA1regionrL42_prog_map_CADD_df$CADD.phred)),
+                                               method='spearman')
+BRCA1regionrL42_tSNV_post_pre_ratio_cadd_cors = cor(log2(BRCA1regionrL42_prog_map_CADD_df$tHDR_post_pre_ratio),
+                                               as.numeric(as.character(BRCA1regionrL42_prog_map_CADD_df$CADD.phred)),
+                                               method='spearman')
+BRCA1regionrL42_cSNV_post_pre_ratio_cadd_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$rL42_post_pre_ratio),
+                                                        as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$CADD.phred)),
+                                                        method='spearman')
+BRCA1regionrL42_tSNV_post_pre_ratio_cadd_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$rL42_tHDR_post_pre_ratio),
+                                                        as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$CADD.phred)),
+                                                        method='spearman')
+BRCA1regionrL42_cSNV_post_pre_ratio_polyphen_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$rL42_post_pre_ratio),
+                                                            as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$polyphen.val)),
+                                                            method='spearman')
+BRCA1regionrL42_tSNV_post_pre_ratio_polyphen_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$rL42_tHDR_post_pre_ratio),
+                                                            as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$polyphen.val)),
+                                                            method='spearman')
+BRCA1regionrL42_cSNV_post_pre_ratio_grantham_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$rL42_post_pre_ratio),
+                                                            as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$Grantham)),
+                                                            method='spearman')
+BRCA1regionrL42_tSNV_post_pre_ratio_grantham_missense_cors = cor(log2(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$rL42_tHDR_post_pre_ratio),
+                                                            as.numeric(as.character(BRCA1regionrL41_prog_map_CADD_thresh5_df_rL42_int_ord_df_missense$Grantham)),
+                                                            method='spearman')
+
+BRCA1regionrL42_cors <- c("BRCA1regionrL42",
+                     BRCA1regionrL42_cSNV_pre_lib_cors,
+                     BRCA1regionrL42_tSNV_pre_lib_cors,
+                     BRCA1regionrL42_cSNV_post_lib_cors,
+                     BRCA1regionrL42_tSNV_post_lib_cors,
+                     BRCA1regionrL42_cSNV_post_pre_cors,
+                     BRCA1regionrL42_tSNV_post_pre_cors,
+                     BRCA1regionrL42_cSNV_rna_lib_cors,
+                     BRCA1regionrL42_tSNV_rna_lib_cors,
+                     BRCA1regionrL42_cSNV_rna_pre_cors,
+                     BRCA1regionrL42_tSNV_rna_pre_cors,
+                     BRCA1regionrL41rL42_cSNV_pre_cors,
+                     BRCA1regionrL41rL42_tSNV_pre_cors,
+                     BRCA1regionrL41rL42_cSNV_pre_lib_ratio_cors,
+                     BRCA1regionrL41rL42_tSNV_pre_lib_ratio_cors,
+                     BRCA1regionrL41rL42_cSNV_post_cors,
+                     BRCA1regionrL41rL42_tSNV_post_cors,
+                     BRCA1regionrL41rL42_cSNV_post_lib_ratio_cors,
+                     BRCA1regionrL41rL42_tSNV_post_lib_ratio_cors,
+                     BRCA1regionrL41rL42_cSNV_post_pre_ratio_cors,
+                     BRCA1regionrL41rL42_tSNV_post_pre_ratio_cors,
+                     BRCA1regionrL41rL42_cSNV_rna_cors,
+                     BRCA1regionrL41rL42_tSNV_rna_cors,
+                     BRCA1regionrL41rL42_tSNV_rna_pre_ratio_cors,
+                     BRCA1regionrL42_cSNV_pre_lib_ratio_cadd_cors,
+                     BRCA1regionrL42_tSNV_pre_lib_ratio_cadd_cors,
+                     BRCA1regionrL42_cSNV_post_lib_ratio_cadd_cors,
+                     BRCA1regionrL42_tSNV_post_lib_ratio_cadd_cors,
+                     BRCA1regionrL42_cSNV_post_pre_ratio_cadd_cors,
+                     BRCA1regionrL42_tSNV_post_pre_ratio_cadd_cors,
+                     BRCA1regionrL42_cSNV_post_pre_ratio_cadd_missense_cors,
+                     BRCA1regionrL42_tSNV_post_pre_ratio_cadd_missense_cors,
+                     BRCA1regionrL42_cSNV_post_pre_ratio_polyphen_missense_cors,
+                     BRCA1regionrL42_tSNV_post_pre_ratio_polyphen_missense_cors,
+                     BRCA1regionrL42_cSNV_post_pre_ratio_grantham_missense_cors,
+                     BRCA1regionrL42_tSNV_post_pre_ratio_grantham_missense_cors,
+                     BRCA1regionrL41rL42a_cSNV_pre_lib_ratio_cadd_cors,
+                     BRCA1regionrL41rL42a_tSNV_pre_lib_ratio_cadd_cors,
+                     BRCA1regionrL41rL42a_cSNV_post_lib_ratio_cadd_cors,
+                     BRCA1regionrL41rL42a_tSNV_post_lib_ratio_cadd_cors,
+                     BRCA1regionrL41rL42a_cSNV_post_pre_ratio_cadd_cors,
+                     BRCA1regionrL41rL42a_tSNV_post_pre_ratio_cadd_cors,
+                     BRCA1regionrL41rL42a_cSNV_post_pre_ratio_cadd_missense_cors,
+                     BRCA1regionrL41rL42a_tSNV_post_pre_ratio_cadd_missense_cors,
+                     BRCA1regionrL41rL42a_cSNV_post_pre_ratio_polyphen_missense_cors,
+                     BRCA1regionrL41rL42a_tSNV_post_pre_ratio_polyphen_missense_cors,
+                     BRCA1regionrL41rL42a_cSNV_post_pre_ratio_grantham_missense_cors,
+                     BRCA1regionrL41rL42a_tSNV_post_pre_ratio_grantham_missense_cors,
+                     BRCA1regionrL41rL42w_cSNV_pre_lib_ratio_cadd_cors,
+                     BRCA1regionrL41rL42w_cSNV_post_lib_ratio_cadd_cors,
+                     BRCA1regionrL41rL42w_cSNV_post_pre_ratio_cadd_cors,
+                     BRCA1regionrL41rL42w_tSNV_post_pre_ratio_cadd_cors)
+```
+
+```{r}
+#clear the large data frames from memory
+rm(BRCA1regionrL41)
+rm(BRCA1regionrL42)
+gc()
+```
+Positional modeling included here.
+Requires exon snv dataframes to be present.
+Note that this averages replicates 1,2 after fitting a model for each independently.
+For fitting the model, more lax criteria for inclusion were used due to fewer LOF variants needing to be excluded. (0.3 pre-lib and 0.7 post-pre).
+```{r}
+#a function to extend the lowess fit to points missing on either end of the sequence (must be used on an ordered sequence vector, as supplied here. Will only fill in missing points on the ends)
+library(gridExtra)
+extend_fit <- function(fit_vector) {
+  if (length(which(is.na(fit_vector))) == 0) {
+    out_vector <- fit_vector}
+  else {
+    min_na <- min(which(is.na(fit_vector) == TRUE))
+    min_point <- min(which(is.na(fit_vector) == FALSE))
+    min_point_val <- fit_vector[min_point]
+    max_point <- max(which(is.na(fit_vector) == FALSE))
+    max_point_val <- fit_vector[max_point]
+    max_na <- max(which(is.na(fit_vector) == TRUE))
+    out_vector <- fit_vector
+    if (min_na == 1) {
+      out_vector[min_na:min_point] <- min_point_val}
+    if (max_na == length(fit_vector)) {
+      out_vector[(max_point + 1):length(fit_vector)] <- max_point_val}}
+  return(out_vector)}
+```
+BRCA1regionrL41
+```{r}
+BRCA1region_posrange <- range(as.numeric(as.character(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$pos)))
+
+BRCA1region_posseq <- seq(from = BRCA1region_posrange[1], to = BRCA1region_posrange[2])
+
+BRCA1regionrL41_tHDR_pre_lib_ratio.lo <- loess(log2(tHDR_pre_lib_ratio_synnorm) ~ as.numeric(as.character(pos)),
+                                          BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df,
+                                          subset = which(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$tHDR_post_pre_ratio_synnorm > 0.7 &
+        BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$tHDR_pre_lib_ratio_synnorm > 0.3),
+        model = TRUE,
+        span = 0.15)
+
+BRCA1regionrL41_tHDR_pre_lib_pred <- predict(BRCA1regionrL41_tHDR_pre_lib_ratio.lo,
+                                        newdata = BRCA1region_posseq,
+                                        se = TRUE)
+BRCA1regionrL41_tHDR_pre_lib_pos_effects <- BRCA1regionrL41_tHDR_pre_lib_pred$fit
+
+#.x represents the extended pos_effects.
+BRCA1regionrL41_tHDR_pre_lib_pos_effects.x <- extend_fit(BRCA1regionrL41_tHDR_pre_lib_pos_effects)
+
+BRCA1regionrL41_tHDR_pre_lib_pos_effects_ci <- BRCA1regionrL41_tHDR_pre_lib_pred$se.fit * qt(0.95 / 2 + .5, BRCA1regionrL41_tHDR_pre_lib_pred$df)
+
+BRCA1regionrL41_tHDR_pre_lib_pos_effects_ci_ymin = BRCA1regionrL41_tHDR_pre_lib_pos_effects - BRCA1regionrL41_tHDR_pre_lib_pos_effects_ci
+
+BRCA1regionrL41_tHDR_pre_lib_pos_effects_ci_ymax = BRCA1regionrL41_tHDR_pre_lib_pos_effects + BRCA1regionrL41_tHDR_pre_lib_pos_effects_ci
+
+BRCA1regionrL41_tHDR_pre_lib_pos_effects.df <- data.frame(pos = BRCA1region_posseq,
+                                                     BRCA1regionrL41_tHDR_pre_lib_pos_effects,
+                                                     BRCA1regionrL41_tHDR_pre_lib_pos_effects.x,
+                                                     BRCA1regionrL41_tHDR_pre_lib_pos_effects_ci_ymin,
+                                                     BRCA1regionrL41_tHDR_pre_lib_pos_effects_ci_ymax,
+                                                     BRCA1regionrL41_tHDR_pre_lib_pred_se = BRCA1regionrL41_tHDR_pre_lib_pred$se.fit)
+```
+BRCA1regionrL42
+```{r}
+BRCA1regionrL42_tHDR_pre_lib_ratio.lo <- loess(log2(rL42_tHDR_pre_lib_ratio_synnorm) ~ as.numeric(as.character(pos)),
+                                          BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df,
+                                          subset = which(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_tHDR_post_pre_ratio_synnorm > 0.7 &
+        BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$rL42_tHDR_pre_lib_ratio_synnorm > 0.3),
+        model = TRUE,
+        span = 0.15)
+
+BRCA1regionrL42_tHDR_pre_lib_pred <- predict(BRCA1regionrL42_tHDR_pre_lib_ratio.lo,
+                                        newdata = BRCA1region_posseq,
+                                        se = TRUE)
+
+BRCA1regionrL42_tHDR_pre_lib_pos_effects <- BRCA1regionrL42_tHDR_pre_lib_pred$fit
+
+#.x represents the extended pos_effects.
+BRCA1regionrL42_tHDR_pre_lib_pos_effects.x <- extend_fit(BRCA1regionrL42_tHDR_pre_lib_pos_effects)
+
+BRCA1regionrL42_tHDR_pre_lib_pos_effects_ci <- BRCA1regionrL42_tHDR_pre_lib_pred$se.fit * qt(0.95 / 2 + .5, BRCA1regionrL42_tHDR_pre_lib_pred$df)
+
+BRCA1regionrL42_tHDR_pre_lib_pos_effects_ci_ymin = BRCA1regionrL42_tHDR_pre_lib_pos_effects - BRCA1regionrL42_tHDR_pre_lib_pos_effects_ci
+
+BRCA1regionrL42_tHDR_pre_lib_pos_effects_ci_ymax = BRCA1regionrL42_tHDR_pre_lib_pos_effects + BRCA1regionrL42_tHDR_pre_lib_pos_effects_ci
+
+BRCA1regionrL42_tHDR_pre_lib_pos_effects.df <- data.frame(pos = BRCA1region_posseq,
+                                                     BRCA1regionrL42_tHDR_pre_lib_pos_effects,
+                                                     BRCA1regionrL42_tHDR_pre_lib_pos_effects.x,
+                                                     BRCA1regionrL42_tHDR_pre_lib_pos_effects_ci_ymin,
+                                                     BRCA1regionrL42_tHDR_pre_lib_pos_effects_ci_ymax,
+                                                     BRCA1regionrL42_tHDR_pre_lib_pred_se = BRCA1regionrL42_tHDR_pre_lib_pred$se.fit)
+```
+BRCA1regionrL41rL42
+```{r}
+BRCA1regionrL41rL42_tHDR_pre_lib_ratio.lo <- loess(log2(tHDR_pre_lib_ratio_rL41rL42_mean_synnorm) ~ as.numeric(as.character(pos)),
+                                              BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df,
+                                              subset = which(BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$tHDR_post_pre_ratio_rL41rL42_mean_synnorm > 0.7 &
+        BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df$tHDR_pre_lib_ratio_rL41rL42_mean_synnorm > 0.3),
+        model = TRUE,
+        span = 0.15)
+
+BRCA1regionrL41rL42_tHDR_pre_lib_pred <- predict(BRCA1regionrL41rL42_tHDR_pre_lib_ratio.lo,
+                                            newdata = BRCA1region_posseq,
+                                            se = TRUE)
+
+BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects <- BRCA1regionrL41rL42_tHDR_pre_lib_pred$fit
+
+#.x represents the extended pos_effects.
+BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects.x <- extend_fit(BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects)
+
+BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects_ci <- BRCA1regionrL41rL42_tHDR_pre_lib_pred$se.fit * qt(0.95 / 2 + .5, BRCA1regionrL41rL42_tHDR_pre_lib_pred$df)
+
+BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects_ci_ymin = BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects - BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects_ci
+
+BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects_ci_ymax = BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects + BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects_ci
+
+BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects.df <- data.frame(pos = BRCA1region_posseq,
+                                                         BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects,
+                                                         BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects.x,
+                                                         BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects_ci_ymin,
+                                                         BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects_ci_ymax,
+                                                         BRCA1regionrL41rL42_tHDR_pre_lib_pred_se = BRCA1regionrL41rL42_tHDR_pre_lib_pred$se.fit)
+```
+Merge Data Frames
+----------------
+```{r}
+#merge into a single df (merge original df, and pos effects (extended) df's from all 3 fits -- rL41, rL42, rL41rL42)
+BRCA1regionrL4_tHDR_pos_merge_df <- BRCA1regionrL41_prog_map_thresh5_df_rL42_int_ord_df 
+
+BRCA1regionrL4_tHDR_pos_merge_df <- merge(BRCA1regionrL4_tHDR_pos_merge_df,
+                                     BRCA1regionrL41_tHDR_pre_lib_pos_effects.df[, c("pos", "BRCA1regionrL41_tHDR_pre_lib_pos_effects.x")],
+                                     by="pos",
+                                     all.x=TRUE)
+
+BRCA1regionrL4_tHDR_pos_merge_df <- merge(BRCA1regionrL4_tHDR_pos_merge_df,
+                                     BRCA1regionrL42_tHDR_pre_lib_pos_effects.df[, c("pos","BRCA1regionrL42_tHDR_pre_lib_pos_effects.x")],
+                                     by="pos",
+                                     all.x=TRUE)
+
+#for rL42, need post-lib and pre-lib values first
+BRCA1regionrL4_tHDR_pos_merge_df <- merge(BRCA1regionrL4_tHDR_pos_merge_df,
+                                     BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects.df[, c("pos","BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects.x")],
+                                     by="pos",
+                                     all.x=TRUE)
+```
+
+```{r}
+#Calculate adjusted ratios and put into df (along with affect sizes)
+#5 adjustments for each post-lib and pre-lib measurement (e.g. rL41 vs. rL41_fit and vs. mean_fit)
+BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL41_tHDR_post_lib_loess_rL41 <- log2(BRCA1regionrL4_tHDR_pos_merge_df$tHDR_post_lib_ratio_synnorm) - BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL41_tHDR_pre_lib_pos_effects.x
+
+BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL41_tHDR_post_lib_loess_rL41rL42 <- log2(BRCA1regionrL4_tHDR_pos_merge_df$tHDR_post_lib_ratio_synnorm) - BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects.x
+
+BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL42_tHDR_post_lib_loess_rL42 <- log2(BRCA1regionrL4_tHDR_pos_merge_df$rL42_tHDR_post_lib_ratio_synnorm) - BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL42_tHDR_pre_lib_pos_effects.x
+
+BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL42_tHDR_post_lib_loess_rL41rL42 <- log2(BRCA1regionrL4_tHDR_pos_merge_df$rL42_tHDR_post_lib_ratio_synnorm) - BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects.x
+
+BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL41rL42_tHDR_post_lib_loess_rL41rL42 <- log2(BRCA1regionrL4_tHDR_pos_merge_df$tHDR_post_lib_ratio_rL41rL42_mean_synnorm) - BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects.x
+
+###same for pre-lib
+BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL41_tHDR_pre_lib_loess_rL41 <- log2(BRCA1regionrL4_tHDR_pos_merge_df$tHDR_pre_lib_ratio_synnorm) - BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL41_tHDR_pre_lib_pos_effects.x
+
+BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL41_tHDR_pre_lib_loess_rL41rL42 <- log2(BRCA1regionrL4_tHDR_pos_merge_df$tHDR_pre_lib_ratio_synnorm) - BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects.x
+
+BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL42_tHDR_pre_lib_loess_rL42 <- log2(BRCA1regionrL4_tHDR_pos_merge_df$rL42_tHDR_pre_lib_ratio_synnorm) - BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL42_tHDR_pre_lib_pos_effects.x
+
+BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL42_tHDR_pre_lib_loess_rL41rL42 <- log2(BRCA1regionrL4_tHDR_pos_merge_df$rL42_tHDR_pre_lib_ratio_synnorm) - BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects.x
+
+BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL41rL42_tHDR_pre_lib_loess_rL41rL42 <- log2(BRCA1regionrL4_tHDR_pos_merge_df$tHDR_pre_lib_ratio_rL41rL42_mean_synnorm) - BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL41rL42_tHDR_pre_lib_pos_effects.x
+```
+Position Correction Plots
+----------------
+
+
+```{r}
+#Superceding prior normalization with simple normalization to mean for regions with few variants of high effect....
+#include a within-replicate sns normalization (e.sns) next
+#general formula:  b/(a-c)*(A-C) where b is snv, a is exon med syn, c is exon med nonsense, A is global med syn, C is global med nonsense.
+#defines a for rL41
+BRCA1regionrL4_tHDR_post_lib_loess_median_rL41 <- median(BRCA1regionrL4_tHDR_pos_merge_df[which(BRCA1regionrL4_tHDR_pos_merge_df$conseq != 'not_a_conseq'),c('BRCA1regionrL41_tHDR_post_lib_loess_rL41')])
+#defines a for rL42
+BRCA1regionrL4_tHDR_post_lib_loess_median_rL42 <- median(BRCA1regionrL4_tHDR_pos_merge_df[which(BRCA1regionrL4_tHDR_pos_merge_df$conseq != 'not_a_conseq'),c('BRCA1regionrL42_tHDR_post_lib_loess_rL42')])
+
+#simply subtracting mean post-lib score for each
+#calculate new b values for rL41 'e.sns' = exon syn/ns norm.
+BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL41_tHDR_post_lib_loess_rL41_e.sns <- (BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL41_tHDR_post_lib_loess_rL41-BRCA1regionrL4_tHDR_post_lib_loess_median_rL41)
+#calculate new b values for rL42 'e.sns' = exon syn/ns norm.
+BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL42_tHDR_post_lib_loess_rL42_e.sns <- (BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL42_tHDR_post_lib_loess_rL42-BRCA1regionrL4_tHDR_post_lib_loess_median_rL42)
+
+#calculate a new post_lib mean based on individually fit, exon-normalized data
+BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL4_tHDR_post_lib_loess_e.sns_rL41rL42_mean <- (BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL41_tHDR_post_lib_loess_rL41_e.sns+BRCA1regionrL4_tHDR_pos_merge_df$BRCA1regionrL42_tHDR_post_lib_loess_rL42_e.sns)/2
+
+BRCA1regionrL4_tHDR_post_lib_loess_e.sns_rL41rL42_median <- median(BRCA1regionrL4_tHDR_pos_merge_df[which(BRCA1regionrL4_tHDR_pos_merge_df$conseq != 'not_a_conseq'),c('BRCA1regionrL4_tHDR_post_lib_loess_e.sns_rL41rL42_mean')])
+
+
+```
+
+
+```{r}
+#mean function score (post/pre)
+BRCA1regionrL4_mean_post_pre_vs_pos = ggplot(BRCA1regionrL4_tHDR_pos_merge_df,
+       aes(y = log2(tHDR_post_pre_ratio_rL41rL42_mean_synnorm), 
+           x = as.numeric(as.character(pos)))) + 
+  geom_point(aes(colour = conseq)) + 
+  #coord_cartesian(ylim = c(-5, 1)) +
+  theme(panel.background = element_rect(fill = 'white', 
+                                        colour = 'white')) +
+  theme(legend.title = element_blank(),
+        legend.key = element_blank(),
+        legend.position = "None") + 
+  ylab(paste0(SGE_region, ' mean function score (post/pre)')) + 
+  xlab('Chr. 17 position') + 
+  theme(panel.background = element_rect(fill = 'white', 
+                                        colour = 'white')) +
+  theme(text = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        axis.text.x = element_text(size = 12),
+        strip.background = element_blank()) + 
+  scale_fill_manual(values = named_conseq_colors) + 
+  scale_color_manual(values = named_conseq_colors) + 
+  scale_x_reverse() +
+ # geom_vline(xintercept = BRCA1region_cut_pos, lty = 2) +
+  #geom_hline(yintercept = 0, lty = 3) + geom_hline(yintercept = 0, lty = 3) +
+  #geom_hline(yintercept = -1.328, lty = 2) + geom_hline(yintercept = -0.748, lty = 2) + 
+  geom_text(aes(label = rev_comp),
+            hjust = 0.5,
+            vjust = 0.5,
+            size = 1.4,
+            colour = 'White')
+
+BRCA1regionrL4_mean_post_pre_vs_pos
+
+
+```
+
+
+```{r}
+#### saving ####
+#
+ggsave(paste0("plots/pipeline/", date, "_", SGE_region, "_", expt, "_", rep1, rep2, "_post_pre_by_pos_reversed_v2.png"), BRCA1regionrL4_mean_post_pre_vs_pos, height = 4, width = 8)
+
+#
+write.csv(x = BRCA1regionrL4_tHDR_pos_merge_df, file = paste0("R_script_output/", date, "_BRCA1", SGE_region, "_", expt,"_", rep1, rep2, "_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv"), row.names = FALSE)
+
+
+```
+
+

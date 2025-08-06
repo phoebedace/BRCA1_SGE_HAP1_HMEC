@@ -1,0 +1,100 @@
+INDEL ANALYSIS to estimate number of distinct variants scored by pooling true_indels from all exons
+and to see how indel frame matters across exons / ID specific variants that do / don't cause depletion
+
+```{r}
+#Load packages needed
+require(gridExtra)
+require(mclust)
+library(mixtools)
+require(ggplot2)
+library(plyr)
+require(VennDiagram)
+library(gam)
+library(plotROC)
+require(tidyverse)
+
+#MUST LOAD ENVIRONMENT
+date <- "250711"
+
+options(digits = 15)
+
+BRCA1_editing_info <- read.table("~/OneDrive - The Francis Crick Institute/R/220915_BRCA1x1u1u2x10a/BRCA1_editing_data.txt",header=TRUE, sep="\t")
+#must rename this for each experiment.
+experiment_dir_220926 = "~/OneDrive - The Francis Crick Institute/R/220915_BRCA1x1u1u2x10a/BRCA1x1_final/"
+
+#cut positions
+BRCA1x1_cut_pos = 41277361
+BRCA1u1_cut_pos = 41277451
+
+BRCA1x1rL41.indel_file <- paste(experiment_dir_220926,'BRCA1x1rL42','_annotated_sindels.txt',sep='')
+BRCA1x1rL42.indel_file <- paste(experiment_dir_220926,'BRCA1x1rL41','_annotated_sindels.txt',sep='')
+BRCA1x1rL41.indels <- read.table(BRCA1x1rL41.indel_file, header=TRUE, sep="\t")
+BRCA1x1rL42.indels <- read.table(BRCA1x1rL42.indel_file, header=TRUE, sep="\t")
+
+View(BRCA1x1rL41.indels)
+View(BRCA1x1rL42.indels)
+
+BRCA1x1rL41.indels$exon <- 'BRCA1x1'
+BRCA1x1rL41.indels$frame <- 'NA'
+BRCA1x1rL41.indels[which(BRCA1x1rL41.indels$indel_frame == 0),]$frame = rep('in',length(which(BRCA1x1rL41.indels$indel_frame == 0)))
+BRCA1x1rL41.indels[which(BRCA1x1rL41.indels$indel_frame != 0),]$frame = rep('out',length(which(BRCA1x1rL41.indels$indel_frame != 0)))
+
+#note -- this is normalized to experiment median of SNVs (not syn. snvs)
+BRCA1x1rL41.indels$post_pre_ratio_synnorm <- BRCA1x1rL41.indels$post_pre_ratio/BRCA1x1rL41_tSNV_post_pre_med
+BRCA1x1rL41.indels$post_lib_ratio_synnorm <- BRCA1x1rL41.indels$post_lib_ratio/BRCA1x1rL41_tSNV_post_lib_med
+BRCA1x1rL41.indels$pre_lib_ratio_synnorm <- BRCA1x1rL41.indels$pre_lib_ratio/BRCA1x1rL41_tSNV_pre_lib_med
+
+BRCA1x1rL42.indels$post_pre_ratio_synnorm <- BRCA1x1rL42.indels$post_pre_ratio/BRCA1x1rL42_tSNV_post_pre_med
+BRCA1x1rL42.indels$post_lib_ratio_synnorm <- BRCA1x1rL42.indels$post_lib_ratio/BRCA1x1rL41_tSNV_post_lib_med
+BRCA1x1rL42.indels$pre_lib_ratio_synnorm <- BRCA1x1rL42.indels$pre_lib_ratio/BRCA1x1rL41_tSNV_pre_lib_med
+
+#renaming columns in replicate 2
+BRCA1x1rL41rL42.indels <- BRCA1x1rL41.indels[which(BRCA1x1rL41.indels$variant %in% BRCA1x1rL42.indels$variant),]
+
+BRCA1x1rL42rL41.indels <- BRCA1x1rL42.indels[which(BRCA1x1rL42.indels$variant %in% BRCA1x1rL41.indels$variant),c('variant','pre', 'post', 'post_pre_ratio','post_pre_ratio_synnorm','post_lib_ratio','post_lib_ratio_synnorm', 'pre_lib_ratio', 'pre_lib_ratio_synnorm')]
+
+colnames(BRCA1x1rL42rL41.indels) <- c('variant','rL42_pre', 'rL42_post', 'rL42_post_pre_ratio','rL42_post_pre_ratio_synnorm','rL42_post_lib_ratio','rL42_post_lib_ratio_synnorm', 'rL42_pre_lib_ratio', 'rL42_pre_lib_ratio_synnorm')
+
+#rL42 pre-lib needs to be included - done
+#calculate mean of pre-lib across reps - done
+#update the loess model below to train only on indels
+#subtract the fit from each indel score 
+
+#Fix post_lib_ratio averaging here and map below
+
+BRCA1x1rL41rL42.indels <- merge(BRCA1x1rL41rL42.indels,BRCA1x1rL42rL41.indels,by='variant')
+BRCA1x1rL41rL42.indels$post_pre_ratio_rL41rL42 <- (BRCA1x1rL41rL42.indels$post_pre_ratio+BRCA1x1rL41rL42.indels$rL42_post_pre_ratio)/2
+BRCA1x1rL41rL42.indels$post_pre_ratio_synnorm_rL41rL42 <- (BRCA1x1rL41rL42.indels$post_pre_ratio_synnorm+BRCA1x1rL41rL42.indels$rL42_post_pre_ratio_synnorm)/2 
+BRCA1x1rL41rL42.indels$post_pre_ratio_rL41rL42 <- (BRCA1x1rL41rL42.indels$post_lib_ratio+BRCA1x1rL41rL42.indels$rL42_post_lib_ratio)/2
+BRCA1x1rL41rL42.indels$post_lib_ratio_synnorm_rL41rL42 <- (BRCA1x1rL41rL42.indels$post_lib_ratio_synnorm+BRCA1x1rL41rL42.indels$rL42_post_lib_ratio_synnorm)/2 
+BRCA1x1rL41rL42.indels.true <- BRCA1x1rL41rL42.indels[which(BRCA1x1rL41rL42.indels$true_indel == 'True' | BRCA1x1rL41rL42.indels$true_indel == 'WT'),]
+BRCA1x1rL41rL42.indels.sge <- BRCA1x1rL41rL42.indels[which(BRCA1x1rL41rL42.indels$sge_indel == 'True' | BRCA1x1rL41rL42.indels$true_indel == 'WT'),]
+
+
+#Exporting indels after filtering:
+BRCA1x1_indels_export <- BRCA1x1rL41rL42.indels %>% 
+select(variant, cigar, ext_cigar, edit_string, pre, post, neg, rL42_pre, rL42_post, lib,  lib_freq, pre_freq, true_indel, sge_indel, indel_type, indel_size, indel_start_pos, indel_frame, post_pre_ratio_synnorm, rL42_post_pre_ratio_synnorm, post_pre_ratio_synnorm_rL41rL42) %>% 
+  #filter(lib_freq > 0.0003) %>% 
+  filter(indel_size == 5 | indel_size == 1) %>% 
+  filter(indel_type == "D") %>% 
+  filter(lib_freq > 0.0001) %>% 
+  filter(sge_indel == "True") %>% 
+  mutate(pos_first_deleted = 41277449 - indel_start_pos,
+         post_last_deleted = 41277449 - indel_start_pos - indel_size + 1,
+         cHGVS_start = indel_start_pos -181,
+         cHGVS_end = indel_start_pos - 181 - 1 + indel_size) %>%
+  mutate(cHGVS = case_when(indel_size == 1 ~ paste0("c.", cHGVS_start, "del"),
+                           indel_size == 5 ~ paste0("c.", cHGVS_start, "_", cHGVS_end, "del")),
+         pos_mid_point = case_when(indel_size == 1 ~ pos_first_deleted,
+                           indel_size == 5 ~ pos_first_deleted - 2)) %>%
+  mutate(r1_function_score = log2(post_pre_ratio_synnorm),
+          r2_function_score = log2(rL42_post_pre_ratio_synnorm),
+          function_score = (r1_function_score + r2_function_score)/2)
+
+
+#
+write.csv(file = paste0("~/Downloads/Run_SGE_scripts/", date, "_BRCA1x1_indels.csv"), x = BRCA1x1_indels_export, row.names = FALSE)
+
+
+```
+
