@@ -2,6 +2,8 @@
 
 Please see the manuscript for a description of the datasets and analyses performed. This depository's purpose is to make available all scripts and files used to analyse SGE data for *BRCA1*.
 
+Raw sequencing data (fastq files) from SGE experiments are available on the European Nucleotide Archive (accession: PRJEB95141).
+
 ### Software versions:
 -	Python 2.7.18 and 3.10.10
 -	R version 4.3.3
