@@ -1,6 +1,6 @@
 ## Code for processing of SGE datasets and analyses included in ‘Saturation genome editing of BRCA1 across cell types accurately resolves cancer risk’
 
-Please see the manuscript for a description of the datasets and analyses performed. This depository's purpose is to make available all scripts and files used to analyse SGE data for *BRCA1*.
+Please see the manuscript (doi: https://doi.org/10.1101/2025.08.11.25333423) for a description of the datasets and analyses performed. This depository's purpose is to make available all scripts and files used to analyse SGE data for *BRCA1*.
 
 Raw sequencing data (fastq files) from SGE experiments are available on the European Nucleotide Archive (accession: PRJEB95141).
 
