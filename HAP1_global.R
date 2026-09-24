@@ -8,24 +8,24 @@ library(tidyverse)
 
 #setup info
 date <- "260304"
-setwd("/Users/dacep/Downloads/Run_SGE_scripts/")
+setwd("path/to/working/directory/")
 options(scipen=999) 
 
 #### Import HAP1 data ####
 ##### SNVs #####
-BRCA1u1_tHDR_pos_merge_df <- read.csv(file = "/Users/dacep/Downloads/Run_SGE_scripts/dfs/220421_BRCA1u1_tHDR_pos_merge_df.csv")
-BRCA1x5_tHDR_pos_merge_df <- read.csv(file = "/Users/dacep/Downloads/Run_SGE_scripts/dfs/240913_BRCA1x5_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
-BRCA1x10a_tHDR_pos_merge_df <- read.csv(file = "/Users/dacep/Downloads/Run_SGE_scripts/dfs/240913_BRCA1x10a_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
-BRCA1x10h2_tHDR_pos_merge_df <- read.csv(file = "/Users/dacep/Downloads/Run_SGE_scripts/dfs/250320_BRCA1x10h2_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
-BRCA1x10h_tHDR_pos_merge_df <- read.csv(file = "/Users/dacep/Downloads/Run_SGE_scripts/dfs/240913_BRCA1x10h_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
-BRCA1x12a_tHDR_pos_merge_df <- read.csv(file = "/Users/dacep/Downloads/Run_SGE_scripts/dfs/240913_BRCA1x12a_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
-BRCA1x12b_tHDR_pos_merge_df <- read.csv(file = "/Users/dacep/Downloads/Run_SGE_scripts/dfs/240913_BRCA1x12b_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
-BRCA1x11_tHDR_pos_merge_df <- read.csv(file = "/Users/dacep/Downloads/Run_SGE_scripts/dfs/240913_BRCA1x11alt_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
-BRCA1x6a_tHDR_pos_merge_df <- read.csv(file = "/Users/dacep/Downloads/Run_SGE_scripts/dfs/240913_BRCA1x6a_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
-BRCA1x1_tHDR_pos_merge_df <- read.csv(file = "/Users/dacep/Downloads/Run_SGE_scripts/dfs/220421_BRCA1x1_tHDR_pos_merge_df.csv")
-BRCA1i11_tHDR_pos_merge_df <- read.csv(file = "/Users/dacep/Downloads/Run_SGE_scripts/dfs/220421_BRCA1i11_tHDR_pos_merge_df.csv")
-BRCA1x10d_tHDR_pos_merge_df <- read.csv(file = "/Users/dacep/Downloads/Run_SGE_scripts/dfs/240913_BRCA1x10d_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
-BRCA1x17q_tHDR_pos_merge_df <- read.csv(file = "/Users/dacep/Downloads/Run_SGE_scripts/dfs/240913_BRCA1x17_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
+BRCA1u1_tHDR_pos_merge_df <- read.csv(file = "220421_BRCA1u1_tHDR_pos_merge_df.csv")
+BRCA1x5_tHDR_pos_merge_df <- read.csv(file = "240913_BRCA1x5_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
+BRCA1x10a_tHDR_pos_merge_df <- read.csv(file = "240913_BRCA1x10a_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
+BRCA1x10h2_tHDR_pos_merge_df <- read.csv(file = "250320_BRCA1x10h2_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
+BRCA1x10h_tHDR_pos_merge_df <- read.csv(file = "240913_BRCA1x10h_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
+BRCA1x12a_tHDR_pos_merge_df <- read.csv(file = "240913_BRCA1x12a_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
+BRCA1x12b_tHDR_pos_merge_df <- read.csv(file = "240913_BRCA1x12b_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
+BRCA1x11_tHDR_pos_merge_df <- read.csv(file = "240913_BRCA1x11alt_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
+BRCA1x6a_tHDR_pos_merge_df <- read.csv(file = "240913_BRCA1x6a_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
+BRCA1x1_tHDR_pos_merge_df <- read.csv(file = "220421_BRCA1x1_tHDR_pos_merge_df.csv")
+BRCA1i11_tHDR_pos_merge_df <- read.csv(file = "220421_BRCA1i11_tHDR_pos_merge_df.csv")
+BRCA1x10d_tHDR_pos_merge_df <- read.csv(file = "240913_BRCA1x10d_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
+BRCA1x17q_tHDR_pos_merge_df <- read.csv(file = "240913_BRCA1x17_tHDR_pos_merge_df_SYNNORM_CORRECTED.csv")
 
 #add column to each with name of SGE region
 BRCA1u1_tHDR_pos_merge_df$sge_region <- "u1"
@@ -61,11 +61,11 @@ BRCA1_all_regions_tHDR_pos_merge_df <- rbind(
 
 ##### Indels #####
 #Promoter
-df_u1_indels <- read.csv(file = "/Users/dacep/Downloads/Run_SGE_scripts/250109_BRCA1u1_indels.csv") %>% 
+df_u1_indels <- read.csv(file = "250109_BRCA1u1_indels.csv") %>% 
   mutate(sge_region = "u1")
 
 #5' UTR
-df_x1_indels <- read.csv(file = "/Users/dacep/Downloads/Run_SGE_scripts/250109_BRCA1x1_indels.csv") %>% 
+df_x1_indels <- read.csv(file = "250109_BRCA1x1_indels.csv") %>% 
   mutate(sge_region = "x1")
 
 df_u1_x1_indels <- rbind(df_u1_indels, df_x1_indels)
@@ -75,7 +75,7 @@ df_u1_x1_indels <- rbind(df_u1_indels, df_x1_indels)
 #hg38, cHGVS, pHGVS, calculating function scores and RNA scores
 
 #load hg38 conversion and rename columns ready to join dfs
-hg38_conversion <- read.csv("230420_BRCA1_hg19_hg38_conversion.csv")
+hg38_conversion <- read.csv("input_files/230420_BRCA1_hg19_hg38_conversion.csv")
 hg38_conversion <- hg38_conversion %>% 
   dplyr::rename("Chrom" = "chr",
          "pos" = "hg19")
@@ -245,7 +245,7 @@ BRCA1region_final_df = ""
      BRCA1region_final_df$fs_threshold_lower <- NA
    }
    
-   #write.csv(x = BRCA1region_final_df, file = paste0("dfs/", date, "_", region, "_filtered_df.csv"), row.names = FALSE)
+   
    return(BRCA1region_final_df)
  }
  
@@ -275,7 +275,6 @@ BRCA1region_final_df = ""
    BRCA1region_final_df[which(BRCA1region_final_df$fdr < 0.2),]$fs_sig <- "FDR < 0.2"
    BRCA1region_final_df[which(BRCA1region_final_df$fdr < 0.05),]$fs_sig <- "FDR < 0.05"
    BRCA1region_final_df[which(BRCA1region_final_df$fdr < 0.01),]$fs_sig <- "FDR < 0.01"
-   #write.csv(x = BRCA1region_final_df, file = paste0("dfs/", date, "_", region, "_filtered_df.csv"), row.names = FALSE)
    if (any(BRCA1region_final_df$fs_sig == "FDR < 0.01")) {
      # Calculate max0.01 and min0.05
      max0.01 <- max(BRCA1region_final_df[BRCA1region_final_df$fs_sig == "FDR < 0.01", ]$function_score_sns)
@@ -362,7 +361,7 @@ BRCA1region_final_df = ""
  #### Add additional data #### 
  ##### ClinVar #####
  #Data downloaded from https://www.ncbi.nlm.nih.gov/clinvar
- clinvar_download <- read.table(file = "clinvar/240913_clinvar.txt", sep="\t", header = TRUE, fill = TRUE, na.strings = "")
+ clinvar_download <- read.table(file = "input_files/240913_clinvar.txt", sep="\t", header = TRUE, fill = TRUE, na.strings = "")
  
  clinvar_download <- clinvar_download %>% 
    dplyr::rename("Review.status" = "Germline.review.status",
@@ -397,7 +396,7 @@ coding_nc_regions_df_newclinvar <- left_join(y = clinvar_download2,
 
  ##### SpliceAI #####
  #SpliceAI run with 500bp distance
- df_spliceAI_scores_new <- read.csv(file = "~/OneDrive - The Francis Crick Institute/R/250127_new_spliceAI_scores/250703_SpliceAI_scores_500bp_all_vars.csv")   
+ df_spliceAI_scores_new <- read.csv(file = "input_files/250703_SpliceAI_scores_500bp_all_vars.csv")   
  
  df_spliceAI_scores_new2 <- df_spliceAI_scores_new %>% 
    select(cHGVS, hg38, Transcript, AG, AL, DG, DL) %>% 
@@ -446,7 +445,7 @@ df_truthset <- coding_nc_regions_df_nodups2 %>%
   
   df_vars_for_pvalues <- coding_nc_regions_df_nodups2
   
-  pathogenic_index <- which.min(gmm_model$parameters$mean)  # Lower mean = pathogenic
+  pathogenic_index <- which.min(gmm_model$parameters$mean)
   df_truthset_gmm$prob_pathogenic <- gmm_model$z[, pathogenic_index]
   df_vars_for_pvalues$prob_pathogenic <- predict(gmm_model, newdata = df_vars_for_pvalues$function_score_sns)$z[, pathogenic_index]
   
@@ -462,7 +461,7 @@ df_truthset <- coding_nc_regions_df_nodups2 %>%
     mutate(evidence_code = cut(OddsPath, breaks = Threshold, labels = Labels))
  
  #importing evidence points conversion 
-  evidence_code_points <- read.csv("250207_evidence_code_points.csv")
+  evidence_code_points <- read.csv("input_files/250207_evidence_code_points.csv")
   
   #variants with high function scores outside of distribution assigned BS3
   df_vars_for_pvalues2_corrected <- df_vars_for_pvalues2 %>% 
@@ -501,7 +500,7 @@ df_truthset <- coding_nc_regions_df_nodups2 %>%
 
 #### DATA EXPORT FOR SUPPLEMENTARY TABLES 1 AND 2 ####
 ##### HAP1 data - Supplementary Table 1 #####
-#final version of adjusted evidence codes (22/7/25)
+
 HAP1_ev_codes_for_supp <- df_vars_for_pvalues2_corrected_with_points_modified %>% 
   select(cHGVS, sge_region, prob_pathogenic, OddsPath, OddsPath_corrected, HAP1_evidence_code_original, HAP1_points_original, HAP1_ev_code_adj, HAP1_points_adj)
   
@@ -511,7 +510,7 @@ truthset_list_df <- df_truthset %>%
 truthset_list <- as.character(truthset_list_df$cHGVS_region)
 
 coding_nc_regions_df_export <- left_join(x = coding_nc_regions_df2,
-          y = HAP1_ev_codes_for_supp, #df_vars_for_pvalues2_corrected_supp,
+          y = HAP1_ev_codes_for_supp,
           by = c("cHGVS", "sge_region"))
 
 
@@ -523,7 +522,7 @@ coding_nc_regions_df_export2 <- coding_nc_regions_df_export %>%
   select(-cHGVS_region)
 
 #add JASPAR scores
-jaspar_data <- read.csv("jaspar_data.csv")
+jaspar_data <- read.csv("input_files/jaspar_data.csv")
 
 coding_nc_regions_df_export3 <- left_join(x = coding_nc_regions_df_export2,
                                           y = jaspar_data,
@@ -655,7 +654,7 @@ coding_nc_regions_df_export7 <- coding_nc_regions_df_export6 %>%
   select(hg38, Alt, Ref, cHGVS, pHGVS, protPos, oAA, nAA, Consequence, CDSpos, SGE_region, final_function_score, q_value, r1_function_score, r2_function_score, RNA_score, threshold_upper, threshold_lower, function_class, final_score, variant, edit_string, ClinVar, ClinVar_simple, ClinVar_review_status, AG, AL, DG, DL, SpliceAI_max, E2F_binding_score, library, negative, r1_D5, r1_D14, r2_D5, r2_D14, r1_D5_RNA, r2_D5_RNA, in_truthset, prob_pathogenic, OddsPath, OddsPath_corrected, evidence_code_original, points_original, evidence_code_adjusted, points_adjusted) %>% 
   arrange(desc(hg38))
 
-#write.csv(x = coding_nc_regions_df_export7, file = paste0("~/Dropbox (The Francis Crick)/BRCA1_HAP1_HMEC_manuscript/SUPPLEMENTARY_TABLES/", date, "_ST1.csv"), row.names = FALSE) 
+#write.csv(x = coding_nc_regions_df_export7, file = paste0("SUPPLEMENTARY_TABLES/", date, "_ST1.csv"), row.names = FALSE) 
 
 dim(coding_nc_regions_df_export7)
 coding_nc_regions_df_export7 %>% 
@@ -665,9 +664,9 @@ coding_nc_regions_df_export7 %>%
 
 ##### HAP1 indel scores - Supplementary Table 2 #####
 
-df_x1_indels_v2 <- read.csv(file = "/Users/dacep/Downloads/Run_SGE_scripts/250711_BRCA1x1_indels.csv") %>% 
+df_x1_indels_v2 <- read.csv(file = "250711_BRCA1x1_indels.csv") %>% 
   mutate(sge_region = "x1")
-df_u1_indels_v2 <- read.csv(file = "/Users/dacep/Downloads/Run_SGE_scripts/250711_BRCA1u1_indels.csv") %>% 
+df_u1_indels_v2 <- read.csv(file = "250711_BRCA1u1_indels.csv") %>% 
   mutate(sge_region = "u1")
 
 df_u1_x1_indels_v2 <- rbind(df_x1_indels_v2,
@@ -722,5 +721,4 @@ df_indels4 <- df_indels3 %>%
                  "mean_function_score" = "function_score"
                  )
 
-#write.csv(x = df_indels4, file = paste0("~/Dropbox (The Francis Crick)/BRCA1_HAP1_HMEC_manuscript/SUPPLEMENTARY_TABLES/", date, "_ST2.csv"), row.names = FALSE) 
-
+#write.csv(x = df_indels4, file = paste0("SUPPLEMENTARY_TABLES/", date, "_ST2.csv"), row.names = FALSE) 
