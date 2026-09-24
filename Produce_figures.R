@@ -1694,7 +1694,7 @@ ggplot(BRCA1_essentiality,
 
 ###### S5d ###### 
 ggplot(NU7441_editing_rates, 
-       aes(x = factor(Concentration), y = HDR_rate_pct)) +
+       aes(x = Concentration), y = HDR_rate_pct) +
   geom_line(aes(group = SGE_region,
                 colour = SGE_region)) +
   geom_point(aes(colour = SGE_region),
@@ -1710,6 +1710,7 @@ ggplot(NU7441_editing_rates,
         axis.text.x = element_text(size = xy_label_size, colour = "#000000"),
         strip.background = element_blank()) +
   scale_color_manual(values = NU7441_region_colours)
+
 
 ###### S5f ###### 
 genes_to_label = c("BRCA1", "BRCA2", "RAD51", "PALB2", "SLFN11", "RNF168")
