@@ -16,12 +16,10 @@ library(mclust)
 library(ggstar)
 library(htmlwidgets)
 library(pROC)
-library(networkD3)
-library(htmlwidgets)
 
 #setup info
 date <- "250605"
-setwd("/Users/dacep/Library/CloudStorage/OneDrive-TheFrancisCrickInstitute/R/HMEC_ALL_V2/")
+setwd("path/to/working/directory/")
 options(scipen=999)
 options(digits = 15)
 
@@ -36,7 +34,7 @@ convert_to_numeric <- function(data, columns) {
 }
 
 #### Importing HAP1 data ####
-df_HAP1_new <- read.csv("~/Downloads/Run_SGE_scripts/250605_Phoebe_BRCA1_SGE_data_all_regions_newclinvar_nodups.csv")
+df_HAP1_new <- read.csv("250605_Phoebe_BRCA1_SGE_data_all_regions_newclinvar_nodups.csv")
 
 #get rid of the old function classes and replace column name with new so I don't have to change all the names to "v2"
 df_HAP1_new <- df_HAP1_new %>% 
@@ -251,7 +249,7 @@ all_dfs <- bind_rows(cleaned_dfs)
 
 
 #load hg38 conversion and rename columns ready to join dfs
-hg38_conversion <- read.csv("databases/230420_BRCA1_hg19_hg38_conversion.csv")
+hg38_conversion <- read.csv("input_files/230420_BRCA1_hg19_hg38_conversion.csv")
 hg38_conversion <- hg38_conversion %>% 
   dplyr::rename("Chrom" = "chr",
          "pos" = "hg19")
@@ -290,7 +288,7 @@ mutate(rHMEC1_post_pre_function_score = log2(tHDR_post_pre_ratio_synnorm),
 
 
 #### Add ClinVar data ####
-clinvar_download <- read.table(file = "databases/240913_clinvar.txt", sep="\t", header = TRUE, fill = TRUE, na.strings = "")
+clinvar_download <- read.table(file = "input_files/240913_clinvar.txt", sep="\t", header = TRUE, fill = TRUE, na.strings = "")
 
 clinvar_download <- clinvar_download %>% 
   dplyr::rename("Review.status" = "Germline.review.status",
@@ -456,7 +454,7 @@ all_dfs_filtered_1 <- all_all_dfs_merge2 %>%
 ##### filter based on lib + day 7 freq #####
 all_dfs_filtered_freq <- all_dfs_filtered_1 %>% 
   filter(lib_pseudo_freq > 0.0001) %>%  #filters 31/36 variants?
-  filter(tHDR_pre_pseudo_freq >= 0.00001 & rL42_tHDR_pre_pseudo_freq >= 0.00001) #%>%  #filters 1354 variants
+  filter(tHDR_pre_pseudo_freq >= 0.00001 & rL42_tHDR_pre_pseudo_freq >= 0.00001)
   
 ##### filter variants scoring discordantly between reps #####
 all_dfs_filtered_2 <- all_dfs_filtered_freq %>% 
@@ -506,7 +504,7 @@ add_fdr_info <- function(region) {
 
 regions <- unique(all_dfs_filtered_2$sge_region[which(all_dfs_filtered_2$sge_region != "u1" & all_dfs_filtered_2$sge_region != "i11" & all_dfs_filtered_2$expt == "ut")])
 df_input <- all_dfs_filtered_2 %>%  filter(expt == "ut")
-BRCA1_region_final_df <- data.frame()  # Initialize as an empty data frame
+BRCA1_region_final_df <- data.frame()
 df_ut <- data.frame()
 
 for (region in regions) {
@@ -518,7 +516,7 @@ for (region in regions) {
 #do same for olap data
 regions <- unique(all_dfs_filtered_2$sge_region[which(all_dfs_filtered_2$sge_region != "u1" & all_dfs_filtered_2$sge_region != "i11" & all_dfs_filtered_2$expt == "olaparib")])
 df_input <- all_dfs_filtered_2 %>%  filter(expt == "olaparib")
-BRCA1_region_final_df <- data.frame()  # Initialize as an empty data frame
+BRCA1_region_final_df <- data.frame()
 df_olap <- data.frame()
 
 for (region in regions) {
@@ -567,7 +565,7 @@ add_fdr_info_nc <- function(region) {
 #non-coding, untreated
 regions <- c("i11", "u1")
 df_input <- all_dfs_filtered_2 %>%  filter(expt == "ut")
-BRCA1_region_final_df <- data.frame()  # Initialize as an empty data frame
+BRCA1_region_final_df <- data.frame()
 df_nc_ut <- data.frame()
 
 for (region in regions) {
@@ -577,7 +575,7 @@ for (region in regions) {
 
 #non-coding, olaparib treated
 df_input <- all_dfs_filtered_2 %>%  filter(expt == "olaparib")
-BRCA1_region_final_df <- data.frame()  # Initialize as an empty data frame
+BRCA1_region_final_df <- data.frame()
 df_nc_olap <- data.frame()
 
 for (region in regions) {
@@ -596,7 +594,7 @@ all_dfs_final <- all_dfs_final %>%
 #### Merge x3 HMEC with 2018 HAP1 data ####
 
 #The only SGE region I have HMEC but not new HAP1 data for is x3 - get from Findlay et al. 2018
-df_HAP1_old <- read_excel("HAP1_data/Supplementary_Table_1_revised_w_WT.xlsx",
+df_HAP1_old <- read_excel("Supplementary_Table_1_revised_w_WT.xlsx",
                           sheet = "Sheet1",
                           range = cell_limits(c(4, 1), c(NA, NA)),
                           na = c("", "NA", "n/a"))
@@ -659,7 +657,7 @@ df_x17x17q <- all_dfs_final %>%
 x17_expt_merge <- function(experiment, df) {
   df_expt <- df[which(df$expt == experiment),]
   df_expt <- df_expt %>% 
-    #select which columns I want - can only be columns that have same value regardless of whether x17/x17q
+    #select ] columns - can only be columns that have same value regardless of whether x17/x17q
     select(pos, hg38, alt, Ref, oAA, nAA, protPos, pHGVS, cHGVS, expt, sge_region, conseq, Clinvar_interpretation_Sep24, Clinvar_Sep24_histo, Clinvar_link, canvar_link, Intron, Exon, CDSpos, Dst2Splice, CADD.raw, CADD.phred, rev_comp, Ref_RC, within_2bp_of_pam_edit, Review.status, Last_reviewed, VariationID, function_score_sns, fdr, fs_sig, fs_threshold, combined_FS_r1, combined_FS_r2, HMEC_class, SpliceAI_max.D14)
   variables = c("function_score_sns", "combined_FS_r1", "combined_FS_r2", "fdr", "fs_sig", "fs_threshold", "HMEC_class")
   df_x17x17q_spread <- df_expt %>%
@@ -851,7 +849,7 @@ df_HMEC_HAP1_all_spread2$conseq <- factor(df_HMEC_HAP1_all_spread2$conseq, level
 #### Adding additional data ####
 ##### gnomAD #####
 
-gnomadv4 <- read.csv("databases/gnomAD_v4.1.0_17-43044295-43170245_2025_02_12_16_51_25.csv")
+gnomadv4 <- read.csv("gnomAD_v4.1.0_17-43044295-43170245_2025_02_12_16_51_25.csv")
 
 df_HMEC_HAP1_all_spread3 <- left_join(df_HMEC_HAP1_all_spread2,
                                   gnomadv4,
@@ -883,7 +881,7 @@ foldX_all_join <- left_join(df_HMEC_HAP1_all_spread2,
 
 
 ##### Alpha Missense #####
-alphamissense <- read_tsv("databases/AlphaMissense-Search-P38398_2.tsv")
+alphamissense <- read_tsv("input_files/AlphaMissense-Search-P38398_2.tsv")
 alphamissense <- alphamissense %>% 
   mutate(pHGVS = paste0("p.", a.a.1, position, a.a.2)) %>% 
   select(pHGVS, position, a.a.2, `pathogenicity score`, `pathogenicity class`)
@@ -895,7 +893,7 @@ df_AM_merge_all <- inner_join(x = df_HMEC_HAP1_all_spread2,
 
   
 ##### EVE scores #####
-  eve_scores <- read.csv("databases/241024_EVE_scores_BRCA1_HUMAN.csv", na.strings = c(""))
+  eve_scores <- read.csv("input_files/241024_EVE_scores_BRCA1_HUMAN.csv", na.strings = c(""))
   
   df_HMEC_HAP1_all_spread2_protein <- df_HMEC_HAP1_all_spread2 %>% 
     filter(expt == "ut")
@@ -909,7 +907,7 @@ eve_merge <- left_join(x = df_HMEC_HAP1_all_spread2_protein,
                               "nAA" = "mt_aa"))
   
 ##### All of Us #####
-AOU_data <- read.csv("~/Downloads/Run_SGE_scripts/240626_AllOfUs_BRCA1.csv", na.strings = "")
+AOU_data <- read.csv("input_files/240626_AllOfUs_BRCA1.csv", na.strings = "")
 
 df_AOU_ut <- df_HMEC_HAP1_all_spread2 %>% 
   filter(expt == "ut") %>% 
@@ -930,7 +928,7 @@ df_present_in_AOU$final_func_class <- factor(df_present_in_AOU$final_func_class,
 
 ##### Comparison to other functional assays #####
 #From Lyra et al.
-df_other_assays <- read_excel("~/OneDrive - The Francis Crick Institute/BRCA1_assays_Lyra_et_al.xlsx",
+df_other_assays <- read_excel("input_files/BRCA1_assays_Lyra_et_al.xlsx",
                           sheet = "STable 1",
                           #range = cell_limits(c(4, 1), c(NA, NA)),
                           na = c("", "NA", "n/a")) %>% 
@@ -966,7 +964,7 @@ df_sge_data_and_other_assays_T131_2 <- df_sge_data_and_other_assays_T131 %>%
   filter(!(count_zeros == 0 & count_ones == 0)) #get rid of vars where no other assay data exists
 
 
-#### Defining truthset and GMM ####
+#### Defining truth set and GMM ####
 df_truthset <- df_HMEC_HAP1_all_spread2 %>% 
   filter(expt == "ut") %>% 
   filter(Clinvar_Sep24_histo != "VUS/conflicting interpretations" & Clinvar_Sep24_histo != "Absent") %>% 
@@ -989,7 +987,7 @@ summary(gmm_model)
 df_vars_for_pvalues <- df_HMEC_HAP1_all_spread2 %>% 
   filter(expt == "ut")
 
-pathogenic_index <- which.min(gmm_model$parameters$mean)  # Lower mean = pathogenic
+pathogenic_index <- which.min(gmm_model$parameters$mean)
 df_truthset_gmm$prob_pathogenic <- gmm_model$z[, pathogenic_index]
 df_vars_for_pvalues$prob_pathogenic <- predict(gmm_model, newdata = df_vars_for_pvalues$function_score_sns)$z[, pathogenic_index]
 
@@ -1005,7 +1003,7 @@ df_vars_for_pvalues2 <- df_vars_for_pvalues %>%
   mutate(evidence_code = cut(OddsPath, breaks = Threshold, labels = Labels))
 
 #adding points for evidence codes
-evidence_code_points <- read.csv("databases/250207_evidence_code_points.csv")
+evidence_code_points <- read.csv("input_files/250207_evidence_code_points.csv")
 
 new_variants_with_points <- left_join(x = df_vars_for_pvalues2,
                                                 y = evidence_code_points,
@@ -1022,7 +1020,7 @@ new_variants_with_points <- left_join(x = df_vars_for_pvalues2,
     )
   
 #Combining with HAP1 points
-  HAP1_points_final <- read.csv("~/Dropbox (The Francis Crick)/BRCA1_HAP1_HMEC_manuscript/Data/250722_HAP1_ev_codes_and_points_mclust_corrected_with_final_rules_applied.csv")
+  HAP1_points_final <- read.csv("250722_HAP1_ev_codes_and_points_mclust_corrected_with_final_rules_applied.csv")
   
   
   df_HAP1_HMEC_points_adj_final <- left_join(x = new_variants_with_points_adjusted,
@@ -1436,7 +1434,6 @@ df_x17_final_scores2 <- left_join(x = df_x17_final_scores_ut,
           suffix = c(".ut", ".olaparib"))
 
 #joining df with reads and df with individual function scores for each rep 
-#must make sure the columns match up here
 
 df_x17_final_scores3 <- df_x17_final_scores2 %>% 
   dplyr::rename("r1_function_score_olaparib" = "x17_combined_FS_r1.olaparib",
@@ -1484,7 +1481,7 @@ df_all_scores_and_counts <- bind_rows(all_dfs_ut_olap_joined2, df_x17_scores_and
    
 ##### Adding new SpliceAI scores #####
 
-   df_spliceAI_scores_new <- read.csv(file = "~/OneDrive - The Francis Crick Institute/R/250127_new_spliceAI_scores/250703_SpliceAI_scores_500bp_all_vars.csv")   
+   df_spliceAI_scores_new <- read.csv(file = "input_files/250703_SpliceAI_scores_500bp_all_vars.csv")   
    
    df_spliceAI_scores_new2 <- df_spliceAI_scores_new %>% 
      select(-Ref, -alt)
@@ -1609,7 +1606,7 @@ df_all_scores_and_counts <- bind_rows(all_dfs_ut_olap_joined2, df_x17_scores_and
      select(hg38, Alt, Ref, cHGVS, pHGVS, protPos, oAA, nAA, Consequence, CDSpos, SGE_region, HAP1_SGE_region, HAP1_function_score_mean, HAP1_func_class, HAP1_data_source, final_function_score_ut, q_value_ut, HMEC_class_ut, final_func_class, r1_function_score_ut, r2_function_score_ut, r3_function_score_ut, r4_function_score_ut, r1_function_score_olaparib, r2_function_score_olaparib, r3_function_score_olaparib, r4_function_score_olaparib, final_function_score_olaparib, q_value_olaparib, HMEC_class_olaparib, ClinVar, ClinVar_simple, ClinVar_review_status, CADD.phred, AlphaMissense_score, AlphaMissense_class, EVE_score, FoldX_score, AG, AL, DG, DL, SpliceAI_max, present_in_gnomad, alleleCount_gnomad, alleleFrequency_gnomad, present_in_AOU, alleleCount_AOU, alleleFrequency_AOU, total_assays, count_normal, count_abnormal, pct_normal, pct_abnormal, HAP1_evidence_code_adjusted, HAP1_points_adjusted, in_HMEC_truthset, HMEC_prob_pathogenic, HMEC_OddsPath, HMEC_evidence_code_original, HMEC_points_original, HMEC_evidence_code_adjusted, HMEC_points_adjusted, total_points, lib_ut.r1r2, neg_ut.r1r2, lib_olaparib.r1r2, neg_olaparib.r1r2, r1_D7_ut, r1_D14_ut, r1_D21_ut, r1_D7_olaparib, r1_D14_olaparib, r1_D21_olaparib, r2_D7_ut, r2_D14_ut, r2_D21_ut, r2_D7_olaparib, r2_D14_olaparib, r2_D21_olaparib, lib_ut.r3r4, neg_ut.r3r4, lib_olaparib.r3r4, neg_olaparib.r3r4, r3_D7_ut, r3_D14_ut, r3_D21_ut, r3_D7_olaparib, r3_D14_olaparib, r3_D21_olaparib, r4_D7_ut, r4_D14_ut, r4_D21_ut, r4_D7_olaparib, r4_D14_olaparib, r4_D21_olaparib) %>% 
      arrange(desc(hg38))
 
-   #write.csv(x = df_export_all14, file = paste0("~/Dropbox (The Francis Crick)/BRCA1_HAP1_HMEC_manuscript/SUPPLEMENTARY_TABLES/", date, "_HAP1-HMEC_combined_data.csv"), row.names = FALSE) 
+   #write.csv(x = df_export_all14, file = paste0("SUPPLEMENTARY_TABLES/", date, "_HAP1-HMEC_combined_data.csv"), row.names = FALSE) 
    
 ##### RNF168 dataframe #####
 df_RNF168_SGE <- read.csv(file = "output_dataframes/250317_HMEC_RNF168_R-C2_x12a_SNS_COMBINED_FSs_incl_olap.csv")
@@ -1652,6 +1649,4 @@ df_RNF168_export <- df_RNF168_SGE %>%
   dplyr::rename("consequence" = "conseq") %>% 
   select(-mean_function_score)
 
-#write.csv(x = df_RNF168_export, file = paste0("~/Dropbox (The Francis Crick)/BRCA1_HAP1_HMEC_manuscript/SUPPLEMENTARY_TABLES/", date, "_RNF168_lines_SGE_scores.csv"), row.names = FALSE) 
-
-
+#write.csv(x = df_RNF168_export, file = paste0("SUPPLEMENTARY_TABLES/", date, "_RNF168_lines_SGE_scores.csv"), row.names = FALSE) 
